@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Check, CheckCircle2, Loader2, PackageCheck, RotateCcw, ScanBarcode, Search, Settings2, Volume2, VolumeX, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConnectionStatus } from "@/components/pack/connection-status";
+import { MobileCameraScanner } from "@/components/pack/mobile-camera-scanner";
 import { ProductArtwork } from "@/components/pack/product-artwork";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -137,13 +138,14 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
       </header>
 
       <section className="border-b bg-card/60 px-4 py-3 sm:px-6">
-        <form className="mx-auto flex max-w-5xl gap-2" onSubmit={(event) => { event.preventDefault(); if (query.trim()) void lookup(query); else if (order?.state === "pending") void markPacked(); }}>
-          <div className="relative flex-1">
+        <form className="mx-auto grid max-w-5xl grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]" onSubmit={(event) => { event.preventDefault(); if (query.trim()) void lookup(query); else if (order?.state === "pending") void markPacked(); }}>
+          <div className="relative col-span-2 sm:col-span-1">
             <ScanBarcode className="absolute left-3 top-1/2 size-5 -translate-y-1/2 text-primary" />
             <Input ref={scannerRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" spellCheck={false} inputMode="text" aria-label="Scan AWB, barcode, or order ID" placeholder="Scan AWB, barcode, or order ID" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
             {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusScanner(); }} aria-label="Clear scan input"><X /></Button> : null}
           </div>
-          <Button type="submit" className="h-12 px-4 sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending"))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : <Search />}<span className="hidden sm:inline">{query.trim() ? "Find order" : "Packed"}</span></Button>
+          <MobileCameraScanner disabled={busy} onScan={(value) => void lookup(value)} />
+          <Button type="submit" className="h-12 w-full px-4 sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending"))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : <Search />}<span>{query.trim() ? "Find order" : "Packed"}</span></Button>
         </form>
       </section>
 

@@ -30,7 +30,7 @@ These server-only variables are used only when no active Vault configuration exi
 
 ## Synchronization
 
-- Vercel invokes `/api/cron/sync` every 30 minutes using `CRON_SECRET`.
+- Supabase Cron invokes the deployed `/api/cron/sync` endpoint every 30 minutes using the matching `CRON_SECRET` stored in Supabase Vault.
 - An admin can trigger the same service from `/admin/sync`.
 - Successful runs persist their checkpoint in `sync_runs`; failed runs keep a bounded error summary.
 - Orders, catalog products, marketplace listings, items, tracking/AWB values, and state are upserted by stable keys.

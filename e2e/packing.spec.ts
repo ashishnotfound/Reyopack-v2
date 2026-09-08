@@ -18,6 +18,15 @@ test.afterEach(async () => {
   expect(browserErrors).toEqual([]);
 });
 
+test("the packing terminal offers live-camera and photo scanning", async ({ page }) => {
+  await page.getByRole("button", { name: "Scan with camera" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Scan with camera" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start rear camera" })).toBeVisible();
+  await expect(page.getByText("Take barcode photo", { exact: true })).toBeVisible();
+  await expect(page.getByText("Barcode images are decoded on this device and are not uploaded.")).toBeVisible();
+});
+
 test("normal packing records the authenticated worker and reaches admin activity", async ({ page }, testInfo) => {
   const scanner = page.getByLabel("Scan AWB, barcode, or order ID");
   await expect(page.locator("body")).not.toHaveText("");

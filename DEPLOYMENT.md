@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- A migrated Supabase project with Authentication, Realtime, Storage, and Cron enabled
+- A migrated Supabase project with Authentication, Realtime, Storage, Cron, and `pg_net` enabled
 - An Amazon Selling Partner application and refresh token when live Amazon sync is required
 - A Vercel project connected to this repository
 
@@ -24,11 +24,12 @@ Set these separately for Production and Preview as appropriate:
 2. Reset a disposable Supabase database and run `npm run test:db`.
 3. Run `npm run test:e2e` with demo mode, then again against a staging Supabase project for authentication/RLS coverage.
 4. Apply database migrations before promoting the matching application build.
-5. Deploy to Vercel and confirm `/login`, a worker scan/pack, admin activity Realtime, manual sync, cron authorization, and retention status.
-6. Verify the production site URL and callback allow-list in Supabase Auth.
-7. Confirm demo mode is false and no secrets appear in browser bundles or logs.
+5. Deploy to Vercel, then store the production HTTPS URL as `reyo_pack_app_url` and the matching `CRON_SECRET` as `reyo_pack_cron_secret` in Supabase Vault.
+6. Confirm `/login`, a worker scan/pack, admin activity Realtime, manual sync, cron authorization, and retention status.
+7. Verify the production site URL and callback allow-list in Supabase Auth.
+8. Confirm demo mode is false and no secrets appear in browser bundles or logs.
 
-`vercel.json` defines the half-hourly sync schedule. Database retention is scheduled inside Supabase and is independent of Vercel availability.
+Supabase Cron defines the half-hourly sync schedule and calls the deployed application over HTTPS. The database retention schedule is also managed in Supabase and is independent of Vercel Cron limits.
 
 ## Rollback
 
