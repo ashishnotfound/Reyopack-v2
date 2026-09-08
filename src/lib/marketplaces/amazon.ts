@@ -2,6 +2,7 @@ import "server-only";
 
 import { getAmazonAccessToken, loadAmazonCredentials, type AmazonCredentials } from "@/lib/marketplaces/amazon-credentials";
 import { amazonApiErrorMessage, amazonRequestHeaders } from "@/lib/marketplaces/amazon-http";
+import { buildAmazonOrdersUrl } from "@/lib/marketplaces/amazon-orders-url";
 import type { MarketplaceAdapter, NormalizedOrder, SyncCursor, SyncPage } from "@/lib/marketplaces/types";
 
 type AmazonRecord = Record<string, unknown>;
@@ -42,16 +43,7 @@ export async function verifyAmazonOrdersAccess(credentials: AmazonCredentials) {
 
 async function fetchAmazonOrders(credentials: AmazonCredentials, cursor: SyncCursor) {
   const token = await getAmazonAccessToken(credentials);
-  const url = new URL("/orders/2026-01-01/orders", credentials.endpoint);
-  if (cursor.paginationToken) {
-    url.searchParams.set("paginationToken", cursor.paginationToken);
-  } else {
-    url.searchParams.set("lastUpdatedAfter", cursor.updatedAfter);
-    for (const id of credentials.marketplaceIds) url.searchParams.append("marketplaceIds", id);
-    url.searchParams.append("includedData", "FULFILLMENT");
-    url.searchParams.append("includedData", "PACKAGES");
-    url.searchParams.set("maxResultsPerPage", "100");
-  }
+  const url = buildAmazonOrdersUrl(credentials.endpoint, credentials.marketplaceIds, cursor);
 
   return fetchWithBackoff(url, {
     headers: amazonRequestHeaders(token),

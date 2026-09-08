@@ -143,7 +143,7 @@ export function MobileCameraScanner({
         <DialogContent className="overflow-hidden p-0 sm:max-w-lg">
           <DialogHeader className="px-5 pt-5">
             <DialogTitle>Scan with camera</DialogTitle>
-            <DialogDescription>Point the rear camera at an AWB, shipping barcode, QR code, or order barcode.</DialogDescription>
+            <DialogDescription>Scan the carrier tracking/AWB label or a barcode containing the Amazon order ID. Receipt and product barcodes cannot identify an order.</DialogDescription>
           </DialogHeader>
 
           <div className="relative mx-4 aspect-[4/3] overflow-hidden rounded-xl bg-black">

@@ -141,7 +141,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
         <form className="mx-auto grid max-w-5xl grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]" onSubmit={(event) => { event.preventDefault(); if (query.trim()) void lookup(query); else if (order?.state === "pending") void markPacked(); }}>
           <div className="relative col-span-2 sm:col-span-1">
             <ScanBarcode className="absolute left-3 top-1/2 size-5 -translate-y-1/2 text-primary" />
-            <Input ref={scannerRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" spellCheck={false} inputMode="text" aria-label="Scan AWB, barcode, or order ID" placeholder="Scan AWB, barcode, or order ID" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
+            <Input ref={scannerRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" spellCheck={false} inputMode="text" aria-label="Scan tracking label or order ID" placeholder="Scan tracking label or order ID" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
             {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusScanner(); }} aria-label="Clear scan input"><X /></Button> : null}
           </div>
           <MobileCameraScanner disabled={busy} onScan={(value) => void lookup(value)} />
@@ -196,7 +196,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
           <div className="m-auto flex max-w-lg flex-col items-center text-center">
             <span className={`mb-6 grid size-24 place-items-center rounded-2xl border bg-card shadow-lg ${mode === "error" ? "text-destructive" : "text-primary"}`}>{mode === "loading" ? <Loader2 className="size-11 animate-spin" /> : <ScanBarcode className="size-11" />}</span>
             <h1 className="text-3xl font-bold tracking-tight">{mode === "error" ? message : mode === "loading" ? "Finding order…" : "Ready to scan"}</h1>
-            <p className="mt-3 text-base text-muted-foreground">{mode === "error" ? "Scan again or enter the ID manually." : "Scan an AWB, shipping barcode, marketplace order ID, or Reyo Pack ID."}</p>
+            <p className="mt-3 text-base text-muted-foreground">{mode === "error" ? "Scan the carrier tracking/AWB label, or enter the Amazon order ID. Receipt and product barcodes are not searchable." : "Scan a carrier tracking/AWB label, marketplace order ID, or Reyo Pack ID."}</p>
             {mode === "error" ? <Button className="mt-5" variant="outline" onClick={clearOrder}><RotateCcw />Try another scan</Button> : null}
             <div className="mt-8 rounded-lg border bg-card px-4 py-2 text-sm text-muted-foreground"><span className="font-medium text-foreground">{viewer.displayName}</span> is packing · {message}</div>
           </div>
