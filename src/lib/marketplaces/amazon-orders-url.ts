@@ -6,14 +6,11 @@ export function buildAmazonOrdersUrl(
   cursor: SyncCursor,
 ) {
   const url = new URL("/orders/2026-01-01/orders", endpoint);
-  if (cursor.paginationToken) {
-    url.searchParams.set("paginationToken", cursor.paginationToken);
-    return url;
-  }
-
   url.searchParams.set("lastUpdatedAfter", cursor.updatedAfter);
+  if (cursor.updatedBefore) url.searchParams.set("lastUpdatedBefore", cursor.updatedBefore);
   for (const id of marketplaceIds) url.searchParams.append("marketplaceIds", id);
   url.searchParams.set("includedData", "FULFILLMENT,PACKAGES");
   url.searchParams.set("maxResultsPerPage", "100");
+  if (cursor.paginationToken) url.searchParams.set("paginationToken", cursor.paginationToken);
   return url;
 }

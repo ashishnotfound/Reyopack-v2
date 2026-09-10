@@ -1,6 +1,12 @@
 export interface SyncCursor {
   updatedAfter: string;
+  updatedBefore?: string | null;
   paginationToken?: string | null;
+}
+
+export interface SyncRecordFailure {
+  externalOrderId?: string | null;
+  message: string;
 }
 
 export interface NormalizedOrderItem {
@@ -25,6 +31,8 @@ export interface NormalizedOrder {
 
 export interface SyncPage {
   orders: NormalizedOrder[];
+  fetched: number;
+  failures: SyncRecordFailure[];
   nextToken?: string | null;
   checkpoint: string;
 }
@@ -34,4 +42,5 @@ export interface MarketplaceAdapter {
   readonly displayName: string;
   isConfigured(): boolean | Promise<boolean>;
   fetchOrders(cursor: SyncCursor): Promise<SyncPage>;
+  fetchOrder?(externalOrderId: string): Promise<NormalizedOrder>;
 }

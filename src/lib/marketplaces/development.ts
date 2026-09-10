@@ -6,6 +6,6 @@ export class DevelopmentMarketplaceAdapter implements MarketplaceAdapter {
   isConfigured() { return process.env.REYO_PACK_DEMO_MODE === "true"; }
   async fetchOrders(cursor: SyncCursor) {
     if (!this.isConfigured()) throw new Error("The development adapter is disabled.");
-    return { orders: [], nextToken: null, checkpoint: cursor.updatedAfter };
+    return { orders: [], fetched: 0, failures: [], nextToken: null, checkpoint: cursor.updatedAfter };
   }
 }

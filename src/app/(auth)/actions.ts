@@ -29,7 +29,7 @@ export async function loginAction(_: AuthState, formData: FormData): Promise<Aut
   }
   const roles = profile.user_roles as Array<{ role: string }> | null;
   const role = roles?.[0]?.role;
-  redirect(role === "worker" ? "/pack" : "/admin");
+  redirect(role === "worker" ? "/workload" : "/admin");
 }
 
 export async function logoutAction() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amazonApiErrorMessage, amazonRequestHeaders, amazonTimestamp } from "@/lib/marketplaces/amazon-http";
+import { amazonApiErrorMessage, amazonRequestHeaders, amazonRetryDelay, amazonTimestamp } from "@/lib/marketplaces/amazon-http";
 
 describe("Amazon SP-API HTTP helpers", () => {
   it("formats the required Amazon request timestamp", () => {
@@ -24,5 +24,10 @@ describe("Amazon SP-API HTTP helpers", () => {
     await expect(amazonApiErrorMessage(response)).resolves.toBe(
       "Amazon rejected this marketplace/region combination. Choose the SP-API region that contains every marketplace ID. Request ID: request-123.",
     );
+  });
+
+  it("respects Amazon's advertised quota recovery interval", () => {
+    const response = new Response(null, { status: 429, headers: { "x-amzn-ratelimit-limit": "0.0056" } });
+    expect(amazonRetryDelay(response, 0)).toBe(178572);
   });
 });

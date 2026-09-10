@@ -6,5 +6,5 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const viewer = await getViewer();
   if (!viewer) redirect("/login");
-  redirect(viewer.role === "worker" ? "/pack" : "/admin");
+  redirect(viewer.role === "worker" ? "/workload" : "/admin");
 }

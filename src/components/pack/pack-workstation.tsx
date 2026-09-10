@@ -22,12 +22,12 @@ import type { PackOrder, Viewer } from "@/types/domain";
 
 type Mode = "idle" | "loading" | "ready" | "packing" | "success" | "error";
 
-export function PackWorkstation({ viewer }: { viewer: Viewer }) {
+export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewer; initialOrder?: PackOrder | null }) {
   const awbInputRef = useRef<HTMLInputElement>(null);
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [query, setQuery] = useState("");
-  const [order, setOrder] = useState<PackOrder | null>(null);
-  const [mode, setMode] = useState<Mode>("idle");
+  const [order, setOrder] = useState<PackOrder | null>(initialOrder);
+  const [mode, setMode] = useState<Mode>(initialOrder ? "ready" : "idle");
   const [message, setMessage] = useState("AWB search ready");
   const soundEnabled = useSoundPreference();
 
@@ -134,6 +134,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
           <div><p className="font-semibold leading-none">Reyo Pack</p><p className="mt-1 text-xs text-muted-foreground">Packing terminal</p></div>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
+          <Button asChild variant="outline" size="sm"><Link href="/workload">Orders</Link></Button>
           <ConnectionStatus />
           <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={() => { setSoundPreference(!soundEnabled); focusAwbInput(); }} aria-label={soundEnabled ? "Disable sounds" : "Enable sounds"}>{soundEnabled ? <Volume2 /> : <VolumeX />}</Button></TooltipTrigger><TooltipContent>Scan and success sounds</TooltipContent></Tooltip>
           <ThemeToggle />

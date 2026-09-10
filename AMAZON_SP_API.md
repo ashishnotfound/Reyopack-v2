@@ -1,6 +1,6 @@
 # Amazon Selling Partner API
 
-The production adapter uses the current Orders API `v2026-01-01` `searchOrders` operation. It requests fulfillment and package data, follows pagination tokens, keeps the last successful marketplace update checkpoint, and retries HTTP 429/5xx responses with bounded backoff.
+The production adapter uses the current Orders API `v2026-01-01` `searchOrders` operation. It requests fulfillment and package data, follows the nested `pagination.nextToken` value until Amazon returns no token, keeps the last successful marketplace update checkpoint, and retries HTTP 429/5xx responses with bounded backoff.
 
 ## Configure in the app
 
@@ -31,9 +31,16 @@ These server-only variables are used only when no active Vault configuration exi
 ## Synchronization
 
 - Supabase Cron invokes the deployed `/api/cron/sync` endpoint every 30 minutes using the matching `CRON_SECRET` stored in Supabase Vault.
-- An admin can trigger the same service from `/admin/sync`.
-- Successful runs persist their checkpoint in `sync_runs`; failed runs keep a bounded error summary.
+- Admins and workers can trigger the same service with **Sync Orders**.
+- The initial sync covers Amazon's supported two-year search window. Later runs use a small overlap around the last successful UTC checkpoint so late updates and midnight boundaries are not skipped.
+- Every paginated request keeps the original marketplace and date-window parameters and adds Amazon's pagination token. There is no application-level maximum order count.
+- The checkpoint advances only after the complete window succeeds, never between pages.
+- Successful runs persist fetched, added, updated, unchanged, failed, and page counts in `sync_runs`. Request and per-order failures are recorded in `sync_failures` for the admin sync log.
 - Orders, catalog products, marketplace listings, items, tracking/AWB values, and state are upserted by stable keys.
+- Existing orders are refreshed when Amazon provides newer data; an older response cannot overwrite a newer stored version.
+- Order identity is the Amazon marketplace plus Amazon order ID. AWBs are indexed for fast lookup but are not treated as globally unique, because one tracking number can legitimately cover separate orders.
 - Cancelled external orders become terminal `cancelled` rows. Already packed attribution is never overwritten.
+
+The packing counters are calculated from the synced database, not from the current page of the order list. They exclude cancelled or unfulfillable orders and Amazon-fulfilled (FBA) orders because those do not belong in the merchant packing workflow.
 
 Amazon credentials and app authorization must be provisioned in Seller Central before the adapter can make live requests. Validate the selected regional endpoint and marketplace IDs during rollout.

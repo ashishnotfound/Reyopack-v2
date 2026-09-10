@@ -12,6 +12,14 @@ export function amazonRequestHeaders(accessToken: string, date = new Date()): He
   };
 }
 
+export function amazonRetryDelay(response: Response, attempt: number) {
+  const retryAfterSeconds = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) return Math.min(180_000, retryAfterSeconds * 1_000);
+  const rate = Number(response.headers.get("x-amzn-ratelimit-limit"));
+  if (response.status === 429 && Number.isFinite(rate) && rate > 0) return Math.min(180_000, Math.max(1_000, Math.ceil(1_000 / rate)));
+  return Math.min(30_000, 750 * 2 ** attempt + Math.random() * 250);
+}
+
 export async function amazonApiErrorMessage(response: Response) {
   let payload: unknown = null;
   try {

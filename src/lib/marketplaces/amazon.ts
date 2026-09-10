@@ -1,9 +1,10 @@
 import "server-only";
 
 import { getAmazonAccessToken, loadAmazonCredentials, type AmazonCredentials } from "@/lib/marketplaces/amazon-credentials";
-import { amazonApiErrorMessage, amazonRequestHeaders } from "@/lib/marketplaces/amazon-http";
+import { amazonApiErrorMessage, amazonRequestHeaders, amazonRetryDelay } from "@/lib/marketplaces/amazon-http";
 import { buildAmazonOrdersUrl } from "@/lib/marketplaces/amazon-orders-url";
-import type { MarketplaceAdapter, NormalizedOrder, SyncCursor, SyncPage } from "@/lib/marketplaces/types";
+import { parseAmazonOrdersPage } from "@/lib/marketplaces/amazon-orders-page";
+import type { MarketplaceAdapter, NormalizedOrder, SyncCursor, SyncPage, SyncRecordFailure } from "@/lib/marketplaces/types";
 
 type AmazonRecord = Record<string, unknown>;
 
@@ -24,12 +25,31 @@ export class AmazonAdapter implements MarketplaceAdapter {
     if (!credentials) throw new Error("Amazon SP-API credentials are not configured.");
     const response = await fetchAmazonOrders(credentials, cursor);
     if (!response.ok) throw new Error(await amazonApiErrorMessage(response));
-    const payload: AmazonRecord = await response.json();
-    const ordersRaw = arrayFrom(payload.orders ?? recordFrom(payload.payload).orders);
-    const nextToken = stringFrom(payload.nextToken ?? recordFrom(payload.payload).nextToken);
-    const orders = ordersRaw.map(normalizeAmazonOrder).filter((order): order is NormalizedOrder => order !== null);
+    const payload: unknown = await response.json();
+    const { orders: ordersRaw, nextToken } = parseAmazonOrdersPage(payload);
+    const orders: NormalizedOrder[] = [];
+    const failures: SyncRecordFailure[] = [];
+    ordersRaw.forEach((value, index) => {
+      const order = normalizeAmazonOrder(value, index);
+      if (order) orders.push(order);
+      else failures.push({ externalOrderId: stringFrom(recordFrom(value).orderId), message: `Amazon order at response position ${index + 1} had no orderId.` });
+    });
     const checkpoint = orders.reduce((latest, order) => order.updatedAt > latest ? order.updatedAt : latest, cursor.updatedAfter);
-    return { orders, nextToken, checkpoint };
+    return { orders, fetched: ordersRaw.length, failures, nextToken, checkpoint };
+  }
+
+  async fetchOrder(externalOrderId: string): Promise<NormalizedOrder> {
+    const credentials = await this.getCredentials();
+    if (!credentials) throw new Error("Amazon SP-API credentials are not configured.");
+    const token = await getAmazonAccessToken(credentials);
+    const url = new URL(`/orders/2026-01-01/orders/${encodeURIComponent(externalOrderId)}`, credentials.endpoint);
+    url.searchParams.set("includedData", "FULFILLMENT,PACKAGES");
+    const response = await fetchWithBackoff(url, { headers: amazonRequestHeaders(token), cache: "no-store" });
+    if (!response.ok) throw new Error(await amazonApiErrorMessage(response));
+    const payload: AmazonRecord = await response.json();
+    const order = normalizeAmazonOrder(payload.order ?? recordFrom(payload.payload).order);
+    if (!order) throw new Error(`Amazon getOrder returned no order for ${externalOrderId}.`);
+    return order;
   }
 
 }
@@ -51,7 +71,7 @@ async function fetchAmazonOrders(credentials: AmazonCredentials, cursor: SyncCur
   });
 }
 
-function normalizeAmazonOrder(value: unknown): NormalizedOrder | null {
+function normalizeAmazonOrder(value: unknown, orderIndex = 0): NormalizedOrder | null {
   const order = recordFrom(value);
   const externalOrderId = stringFrom(order.orderId);
   const channel = recordFrom(order.salesChannel);
@@ -59,12 +79,12 @@ function normalizeAmazonOrder(value: unknown): NormalizedOrder | null {
   const packages = arrayFrom(order.packages).map(recordFrom);
   const firstPackage = packages[0] ?? {};
   const tracking = recordFrom(firstPackage.tracking);
-  const items = arrayFrom(order.orderItems).map((itemValue) => {
+  const items = arrayFrom(order.orderItems).map((itemValue, itemIndex) => {
     const item = recordFrom(itemValue); const product = recordFrom(item.product);
     const quantity = numberFrom(item.quantityOrdered) ?? 1;
     if (!Number.isInteger(quantity) || quantity <= 0) return null;
     return {
-      externalItemId: stringFrom(item.orderItemId) ?? stringFrom(product.sellerSku) ?? stringFrom(product.asin) ?? "unmapped-item",
+      externalItemId: stringFrom(item.orderItemId) ?? `${stringFrom(product.sellerSku) ?? stringFrom(product.asin) ?? `unmapped-${orderIndex + 1}`}-${itemIndex + 1}`,
       sellerSku: stringFrom(product.sellerSku) ?? "UNMAPPED",
       asin: stringFrom(product.asin),
       title: stringFrom(product.title) ?? stringFrom(product.sellerSku) ?? "Unmapped Amazon item",
@@ -90,8 +110,8 @@ async function fetchWithBackoff(input: URL, init: RequestInit, attempts = 5) {
     const response = await fetch(input, init);
     if (response.ok || ![429, 500, 502, 503, 504].includes(response.status)) return response;
     lastResponse = response;
-    const retryAfter = Number(response.headers.get("retry-after"));
-    const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : Math.min(30_000, 750 * 2 ** attempt + Math.random() * 250);
+    if (attempt === attempts - 1 || (response.status === 429 && attempt >= 1)) return response;
+    const delay = amazonRetryDelay(response, attempt);
     await new Promise((resolve) => setTimeout(resolve, delay));
   }
   return lastResponse!;

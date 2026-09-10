@@ -201,6 +201,29 @@ export async function listWorkers(): Promise<WorkerSummary[]> {
   }));
 }
 
+export async function listMarketplaceSyncRuns() {
+  if (isDemoMode() || !hasSupabaseConfig()) return [];
+  const supabase = await createClient();
+  const { data: runs } = await supabase.from("sync_runs")
+    .select("id,status,records_fetched,records_added,records_updated,records_unchanged,records_failed,records_processed,pages_processed,error_message,started_at,finished_at,sync_version")
+    .order("started_at", { ascending: false }).limit(10);
+  const ids = (runs ?? []).map((run) => run.id);
+  const { data: failures } = ids.length
+    ? await supabase.from("sync_failures").select("sync_run_id,stage,page_number,amazon_order_id,error_message").in("sync_run_id", ids).is("resolved_at", null).order("created_at", { ascending: false })
+    : { data: [] };
+  return (runs ?? []).map((run) => ({
+    id: String(run.id), status: String(run.status), version: Number(run.sync_version ?? 1),
+    fetched: Number(run.records_fetched ?? run.records_processed ?? 0), added: Number(run.records_added ?? 0),
+    updated: Number(run.records_updated ?? 0), unchanged: Number(run.records_unchanged ?? 0), failed: Number(run.records_failed ?? 0),
+    pages: Number(run.pages_processed ?? 0), startedAt: String(run.started_at), finishedAt: run.finished_at ? String(run.finished_at) : null,
+    error: run.error_message ? String(run.error_message) : null,
+    failures: (failures ?? []).filter((failure) => failure.sync_run_id === run.id).map((failure) => ({
+      stage: String(failure.stage), page: Number(failure.page_number ?? 0), orderId: failure.amazon_order_id ? String(failure.amazon_order_id) : null,
+      error: String(failure.error_message),
+    })),
+  }));
+}
+
 export async function listLocations(): Promise<LocationSummary[]> {
   if (isDemoMode()) return DEMO_LOCATIONS;
   if (!hasSupabaseConfig()) return [];
