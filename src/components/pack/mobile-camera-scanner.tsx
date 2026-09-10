@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { isLikelyAwb, normalizeAwbLookup } from "@/lib/awb";
+import { playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
 import type { IScannerControls } from "@zxing/browser";
 
 type ScannerState = "idle" | "starting" | "active" | "reading" | "error";
@@ -20,9 +21,11 @@ type ScannerState = "idle" | "starting" | "active" | "reading" | "error";
 export function MobileCameraScanner({
   disabled,
   onAwb,
+  soundEnabled,
 }: {
   disabled: boolean;
   onAwb: (value: string) => void;
+  soundEnabled: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
@@ -50,14 +53,16 @@ export function MobileCameraScanner({
     const awb = normalizeAwbLookup(rawValue);
     if (!isLikelyAwb(awb) || resultHandledRef.current) return false;
     resultHandledRef.current = true;
+    if (soundEnabled) playScanBeep();
     stopCamera();
     setOpen(false);
     toast.success(`AWB ${awb} captured`);
     onAwb(awb);
     return true;
-  }, [onAwb, stopCamera]);
+  }, [onAwb, soundEnabled, stopCamera]);
 
   const startCamera = useCallback(async () => {
+    if (soundEnabled) primeAudioFeedback();
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setScannerState("error");
       setErrorMessage("Live AWB scanning needs an HTTPS address. On this local-network page, use Take AWB photo below.");
@@ -100,7 +105,7 @@ export function MobileCameraScanner({
       setScannerState("error");
       setErrorMessage(cameraErrorMessage(error));
     }
-  }, [finishAwbScan, stopCamera]);
+  }, [finishAwbScan, soundEnabled, stopCamera]);
 
   const scanPhoto = useCallback(async (file: File | undefined) => {
     if (!file) return;
@@ -140,7 +145,7 @@ export function MobileCameraScanner({
 
   return (
     <>
-      <Button type="button" variant="outline" className="h-12 w-full px-4" disabled={disabled} onClick={() => handleOpenChange(true)} aria-label="Scan AWB with camera">
+      <Button type="button" variant="outline" className="h-12 w-full px-4" disabled={disabled} onClick={() => { if (soundEnabled) primeAudioFeedback(); handleOpenChange(true); }} aria-label="Scan AWB with camera">
         <Camera />
         Scan AWB
       </Button>

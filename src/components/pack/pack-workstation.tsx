@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { normalizeAwbLookup } from "@/lib/awb";
+import { playSuccessTone } from "@/lib/audio-feedback";
 import { formatDateTime } from "@/lib/format";
 import { setSoundPreference, useSoundPreference } from "@/lib/sound-preference";
 import type { PackOrder, Viewer } from "@/types/domain";
@@ -133,7 +134,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           <ConnectionStatus />
-          <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={() => { setSoundPreference(!soundEnabled); focusAwbInput(); }} aria-label={soundEnabled ? "Disable success sound" : "Enable success sound"}>{soundEnabled ? <Volume2 /> : <VolumeX />}</Button></TooltipTrigger><TooltipContent>Success sound</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={() => { setSoundPreference(!soundEnabled); focusAwbInput(); }} aria-label={soundEnabled ? "Disable sounds" : "Enable sounds"}>{soundEnabled ? <Volume2 /> : <VolumeX />}</Button></TooltipTrigger><TooltipContent>Scan and success sounds</TooltipContent></Tooltip>
           <ThemeToggle />
           {viewer.role !== "worker" ? <Button asChild variant="ghost" size="icon"><Link href="/admin" aria-label="Open admin"><Settings2 /></Link></Button> : null}
         </div>
@@ -146,7 +147,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
             <Input ref={awbInputRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} inputMode="text" aria-label="Enter AWB number" placeholder="Enter the printed AWB number" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
             {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusAwbInput(); }} aria-label="Clear AWB input"><X /></Button> : null}
           </div>
-          <MobileCameraScanner disabled={busy} onAwb={(value) => void lookup(value)} />
+          <MobileCameraScanner disabled={busy} soundEnabled={soundEnabled} onAwb={(value) => void lookup(value)} />
           <Button type="submit" className="h-12 w-full px-4 sm:w-auto sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending"))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : confirmMode ? <PackageCheck /> : <Search />}<span>{confirmMode ? "Packed" : "Find AWB"}</span></Button>
         </form>
       </section>
@@ -223,21 +224,4 @@ function getDeviceId() {
   const generated = crypto.randomUUID();
   localStorage.setItem(key, generated);
   return generated;
-}
-
-function playSuccessTone() {
-  const AudioContextCtor = window.AudioContext;
-  const context = new AudioContextCtor();
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.type = "sine";
-  oscillator.frequency.setValueAtTime(720, context.currentTime);
-  oscillator.frequency.exponentialRampToValueAtTime(960, context.currentTime + 0.12);
-  gain.gain.setValueAtTime(0.06, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.16);
-  oscillator.connect(gain);
-  gain.connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.16);
-  oscillator.addEventListener("ended", () => void context.close());
 }

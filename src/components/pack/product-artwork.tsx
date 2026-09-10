@@ -5,7 +5,7 @@ export function ProductArtwork({ src, title, sku }: { src?: string | null; title
   if (src) {
     return (
       <div className="relative aspect-[4/5] min-h-0 overflow-hidden rounded-xl bg-muted">
-        <Image src={src} alt={title} fill priority unoptimized={src.startsWith("/api/artwork")} sizes="(max-width: 768px) 100vw, 42vw" className="object-contain" />
+        <Image src={src} alt={title} fill preload unoptimized={src.startsWith("/api/artwork")} sizes="(max-width: 768px) 100vw, 42vw" className="object-contain" />
       </div>
     );
   }
