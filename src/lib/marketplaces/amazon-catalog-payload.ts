@@ -9,6 +9,24 @@ export function amazonMainImageFromPayload(value: unknown, marketplaceId?: strin
   return safeAmazonImageUrl(stringFrom(mainImage?.link));
 }
 
+export function amazonSearchMainImageFromPayload(value: unknown, queryTitle: string, marketplaceId?: string) {
+  const root = recordFrom(value);
+  const ranked = arrayFrom(root.items)
+    .map((itemValue) => {
+      const item = recordFrom(itemValue);
+      const summaries = arrayFrom(item.summaries).map(recordFrom);
+      const preferredSummary = summaries.find((summary) => stringFrom(summary.marketplaceId) === marketplaceId) ?? summaries[0];
+      return {
+        imageUrl: amazonMainImageFromPayload(item, marketplaceId),
+        score: titleSimilarity(queryTitle, stringFrom(preferredSummary?.itemName) ?? ""),
+      };
+    })
+    .filter((candidate) => candidate.imageUrl)
+    .sort((left, right) => right.score - left.score);
+
+  return ranked[0] && ranked[0].score >= 0.5 ? ranked[0].imageUrl : null;
+}
+
 function safeAmazonImageUrl(value: string | null) {
   if (!value) return null;
   try {
@@ -17,6 +35,19 @@ function safeAmazonImageUrl(value: string | null) {
   } catch {
     return null;
   }
+}
+
+function titleSimilarity(left: string, right: string) {
+  const leftTokens = titleTokens(left);
+  const rightTokens = titleTokens(right);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let overlap = 0;
+  for (const token of leftTokens) if (rightTokens.has(token)) overlap += 1;
+  return (2 * overlap) / (leftTokens.size + rightTokens.size);
+}
+
+function titleTokens(value: string) {
+  return new Set(value.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
 }
 
 function recordFrom(value: unknown): AmazonRecord {

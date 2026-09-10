@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   const firstItem = result.data.items[0];
   if (firstItem && !firstItem.imageUrl && firstItem.asin) {
     try {
-      const imageUrl = await resolveAmazonProductImage(firstItem.productId, firstItem.asin);
+      const imageUrl = await resolveAmazonProductImage(firstItem.productId, firstItem.asin, firstItem.title);
       if (imageUrl) firstItem.imageUrl = imageUrl;
     } catch {
       // Artwork is helpful but must never prevent a worker from packing an order.

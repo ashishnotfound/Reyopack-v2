@@ -1,24 +1,24 @@
 import "server-only";
 
 import { getAmazonAccessToken, loadAmazonCredentials, type AmazonCredentials } from "@/lib/marketplaces/amazon-credentials";
-import { amazonMainImageFromPayload } from "@/lib/marketplaces/amazon-catalog-payload";
+import { amazonMainImageFromPayload, amazonSearchMainImageFromPayload } from "@/lib/marketplaces/amazon-catalog-payload";
 import { amazonApiErrorMessage, amazonRequestHeaders } from "@/lib/marketplaces/amazon-http";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const imageRetryDelayMs = 24 * 60 * 60 * 1_000;
 const pendingImages = new Map<string, Promise<string | null>>();
 
-export function resolveAmazonProductImage(productId: string, asin: string) {
+export function resolveAmazonProductImage(productId: string, asin: string, title: string) {
   const existing = pendingImages.get(productId);
   if (existing) return existing;
 
-  const pending = resolveAmazonProductImageUncached(productId, asin)
+  const pending = resolveAmazonProductImageUncached(productId, asin, title)
     .finally(() => pendingImages.delete(productId));
   pendingImages.set(productId, pending);
   return pending;
 }
 
-async function resolveAmazonProductImageUncached(productId: string, asin: string) {
+async function resolveAmazonProductImageUncached(productId: string, asin: string, title: string) {
   if (!/^[A-Z0-9]{10}$/i.test(asin)) return null;
 
   const admin = createAdminClient();
@@ -33,7 +33,7 @@ async function resolveAmazonProductImageUncached(productId: string, asin: string
 
   const credentials = await loadAmazonCredentials();
   if (!credentials) return null;
-  const imageUrl = await fetchAmazonMainImage(credentials, asin.toUpperCase());
+  const imageUrl = await fetchAmazonMainImage(credentials, asin.toUpperCase(), title);
   const { error: updateError } = await admin
     .from("products")
     .update({ image_url: imageUrl, image_synced_at: new Date().toISOString() })
@@ -42,7 +42,7 @@ async function resolveAmazonProductImageUncached(productId: string, asin: string
   return imageUrl;
 }
 
-export async function fetchAmazonMainImage(credentials: AmazonCredentials, asin: string) {
+export async function fetchAmazonMainImage(credentials: AmazonCredentials, asin: string, title?: string) {
   const token = await getAmazonAccessToken(credentials);
 
   for (const marketplaceId of credentials.marketplaceIds) {
@@ -57,6 +57,24 @@ export async function fetchAmazonMainImage(credentials: AmazonCredentials, asin:
     if (!response.ok) throw new Error(await amazonApiErrorMessage(response));
     const imageUrl = amazonMainImageFromPayload(await response.json(), marketplaceId);
     if (imageUrl) return imageUrl;
+  }
+
+  if (title) {
+    const keywords = title.trim().split(/\s+/).slice(0, 8).join(" ").slice(0, 200);
+    for (const marketplaceId of credentials.marketplaceIds) {
+      const url = new URL("/catalog/2022-04-01/items", credentials.endpoint);
+      url.searchParams.set("marketplaceIds", marketplaceId);
+      url.searchParams.set("keywords", keywords);
+      url.searchParams.set("includedData", "images,summaries");
+      url.searchParams.set("pageSize", "10");
+      const response = await fetch(url, {
+        headers: amazonRequestHeaders(token),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(await amazonApiErrorMessage(response));
+      const imageUrl = amazonSearchMainImageFromPayload(await response.json(), title, marketplaceId);
+      if (imageUrl) return imageUrl;
+    }
   }
 
   return null;
