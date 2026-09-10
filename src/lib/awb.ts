@@ -7,6 +7,16 @@ export function normalizeAwbLookup(value: string) {
     .toUpperCase();
 }
 
+export function isLikelyAwb(value: string) {
+  const normalized = normalizeAwbLookup(value);
+  if (normalized.length < 10 || normalized.length > 20) return false;
+  return [...normalized].every((character) =>
+    (character >= "0" && character <= "9")
+    || (character >= "A" && character <= "Z")
+    || character === "-",
+  );
+}
+
 function stripPrintedAwbLabel(value: string) {
   if (value.slice(0, 3).toUpperCase() !== "AWB" || !isLabelSeparator(value[3])) return value;
 

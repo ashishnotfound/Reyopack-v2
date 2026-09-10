@@ -2,7 +2,7 @@
 
 ## Critical packing path
 
-1. `/pack` keeps the AWB field focused and accepts the tracking number printed beneath the shipping-label barcode.
+1. `/pack` accepts the printed AWB or decodes the long AWB barcode locally from the rear camera or a selected photo.
 2. `GET /api/orders/lookup` validates and normalizes the AWB before calling the indexed `lookup_order` database function.
 3. The worker checks product artwork, SKU, quantity, variation, marketplace, and warehouse location.
 4. `POST /api/orders/:id/pack` validates the device payload and calls the atomic `pack_order` function.

@@ -6,7 +6,7 @@
 - `npm run lint` — Next.js/React and security lint rules
 - `npm test` — packing, repeat-lookup, retention-boundary, marketplace-state, image-signature, Amazon request, and AWB-normalization unit tests
 - `npm run test:db` — pgTAP schema, RLS, exact lookup, atomic idempotency, and retention tests over a direct PostgreSQL connection
-- `npm run test:e2e` — desktop and mobile Chromium AWB lookup, packing, and admin workflows
+- `npm run test:e2e` — desktop and mobile Chromium AWB camera, lookup, packing, and admin workflows
 - `npm run build` — production compilation and route validation
 
 The E2E suite covers every admin route, normal AWB lookup and activity updates, 20 harmless repeat lookups, already-packed attribution, rapid double-click and concurrent confirmations producing one new event, and an offline confirmation that must not show success. It also fails on browser console errors and Next.js error overlays.

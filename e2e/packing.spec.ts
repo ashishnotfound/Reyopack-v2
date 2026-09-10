@@ -19,12 +19,16 @@ test.afterEach(async () => {
   expect(browserErrors).toEqual([]);
 });
 
-test("the packing terminal starts with the AWB input ready", async ({ page }) => {
+test("the packing terminal starts with AWB entry and camera scanning ready", async ({ page }) => {
   const awbInput = page.getByLabel("Enter AWB number");
   await expect(page.getByRole("heading", { name: "Ready for AWB" })).toBeVisible();
   await expect(awbInput).toBeFocused();
   await expect(page.getByRole("button", { name: "Find AWB" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Scan with camera" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Scan AWB with camera" }).click();
+  await expect(page.getByRole("heading", { name: "Scan AWB barcode" })).toBeVisible();
+  await expect(page.getByText("Avoid the square codes lower on the label.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start rear camera" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Take AWB photo" })).toBeVisible();
 });
 
 test("normal packing records the authenticated worker and reaches admin activity", async ({ page }, testInfo) => {
