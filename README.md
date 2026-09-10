@@ -1,6 +1,6 @@
 # Reyo Pack
 
-Reyo Pack is Reyo Store's internal, scanner-first warehouse packing application. Workers scan an AWB, order ID, or SKU, confirm the product and pick location, and mark the order packed. The database records one immutable packing event per order with authenticated worker attribution.
+Reyo Pack is Reyo Store's internal, AWB-first warehouse packing application. Workers enter the AWB printed on an Amazon shipping label, confirm the product and pick location, and mark the order packed. The database records one immutable packing event per order with authenticated worker attribution.
 
 ## Stack
 

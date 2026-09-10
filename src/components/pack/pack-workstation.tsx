@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, CheckCircle2, Loader2, PackageCheck, RotateCcw, ScanBarcode, Search, Settings2, Volume2, VolumeX, X } from "lucide-react";
+import { Check, CheckCircle2, Hash, Loader2, PackageCheck, RotateCcw, Search, Settings2, Volume2, VolumeX, X } from "lucide-react";
 import { toast } from "sonner";
 import { ConnectionStatus } from "@/components/pack/connection-status";
-import { MobileCameraScanner } from "@/components/pack/mobile-camera-scanner";
 import { ProductArtwork } from "@/components/pack/product-artwork";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { normalizeAwbLookup } from "@/lib/awb";
 import { formatDateTime } from "@/lib/format";
 import { setSoundPreference, useSoundPreference } from "@/lib/sound-preference";
 import type { PackOrder, Viewer } from "@/types/domain";
@@ -21,47 +21,47 @@ import type { PackOrder, Viewer } from "@/types/domain";
 type Mode = "idle" | "loading" | "ready" | "packing" | "success" | "error";
 
 export function PackWorkstation({ viewer }: { viewer: Viewer }) {
-  const scannerRef = useRef<HTMLInputElement>(null);
+  const awbInputRef = useRef<HTMLInputElement>(null);
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<PackOrder | null>(null);
   const [mode, setMode] = useState<Mode>("idle");
-  const [message, setMessage] = useState("Scanner ready");
+  const [message, setMessage] = useState("AWB search ready");
   const soundEnabled = useSoundPreference();
 
-  const focusScanner = useCallback(() => {
-    window.requestAnimationFrame(() => scannerRef.current?.focus({ preventScroll: true }));
+  const focusAwbInput = useCallback(() => {
+    window.requestAnimationFrame(() => awbInputRef.current?.focus({ preventScroll: true }));
   }, []);
 
   useEffect(() => {
-    focusScanner();
+    focusAwbInput();
     return () => {
       if (successTimer.current) clearTimeout(successTimer.current);
     };
-  }, [focusScanner]);
+  }, [focusAwbInput]);
 
   const clearOrder = useCallback(() => {
     if (successTimer.current) clearTimeout(successTimer.current);
     setOrder(null);
     setQuery("");
     setMode("idle");
-    setMessage("Scanner ready");
-    focusScanner();
-  }, [focusScanner]);
+    setMessage("AWB search ready");
+    focusAwbInput();
+  }, [focusAwbInput]);
 
   const lookup = useCallback(async (rawQuery: string) => {
-    const scan = rawQuery.trim();
-    if (!scan || mode === "loading" || mode === "packing") return;
+    const awb = normalizeAwbLookup(rawQuery);
+    if (!awb || mode === "loading" || mode === "packing") return;
     if (!navigator.onLine) {
       setMode("error");
-      setMessage("Connection lost. Reconnect before scanning.");
+      setMessage("Connection lost. Reconnect before searching.");
       return;
     }
 
     setMode("loading");
-    setMessage(`Looking up ${scan}`);
+    setMessage(`Looking up AWB ${awb}`);
     try {
-      const response = await fetch(`/api/orders/lookup?q=${encodeURIComponent(scan)}`, { cache: "no-store" });
+      const response = await fetch(`/api/orders/lookup?q=${encodeURIComponent(awb)}`, { cache: "no-store" });
       const payload: { order?: PackOrder; error?: string } = await response.json();
       if (!response.ok || !payload.order) throw new Error(payload.error ?? "Order not found.");
       setOrder(payload.order);
@@ -73,9 +73,9 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
       setMode("error");
       setMessage(error instanceof Error ? error.message : "Order lookup failed.");
     } finally {
-      focusScanner();
+      focusAwbInput();
     }
-  }, [focusScanner, mode]);
+  }, [focusAwbInput, mode]);
 
   const markPacked = useCallback(async () => {
     if (!order || order.state !== "pending" || mode === "packing") return;
@@ -104,9 +104,9 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
       setMode("error");
       setMessage(error instanceof Error ? error.message : "Packing failed. Nothing was changed.");
       toast.error("Packing was not confirmed");
-      focusScanner();
+      focusAwbInput();
     }
-  }, [clearOrder, focusScanner, mode, order, soundEnabled, viewer.displayName]);
+  }, [clearOrder, focusAwbInput, mode, order, soundEnabled, viewer.displayName]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -121,6 +121,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
 
   const item = order?.items[0];
   const busy = mode === "loading" || mode === "packing";
+  const confirmMode = !query.trim() && order?.state === "pending";
 
   return (
     <main className="flex min-h-screen flex-col bg-background">
@@ -131,21 +132,20 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           <ConnectionStatus />
-          <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={() => { setSoundPreference(!soundEnabled); focusScanner(); }} aria-label={soundEnabled ? "Disable success sound" : "Enable success sound"}>{soundEnabled ? <Volume2 /> : <VolumeX />}</Button></TooltipTrigger><TooltipContent>Success sound</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={() => { setSoundPreference(!soundEnabled); focusAwbInput(); }} aria-label={soundEnabled ? "Disable success sound" : "Enable success sound"}>{soundEnabled ? <Volume2 /> : <VolumeX />}</Button></TooltipTrigger><TooltipContent>Success sound</TooltipContent></Tooltip>
           <ThemeToggle />
           {viewer.role !== "worker" ? <Button asChild variant="ghost" size="icon"><Link href="/admin" aria-label="Open admin"><Settings2 /></Link></Button> : null}
         </div>
       </header>
 
       <section className="border-b bg-card/60 px-4 py-3 sm:px-6">
-        <form className="mx-auto grid max-w-5xl grid-cols-2 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]" onSubmit={(event) => { event.preventDefault(); if (query.trim()) void lookup(query); else if (order?.state === "pending") void markPacked(); }}>
-          <div className="relative col-span-2 sm:col-span-1">
-            <ScanBarcode className="absolute left-3 top-1/2 size-5 -translate-y-1/2 text-primary" />
-            <Input ref={scannerRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" spellCheck={false} inputMode="text" aria-label="Scan tracking label or order ID" placeholder="Scan tracking label or order ID" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
-            {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusScanner(); }} aria-label="Clear scan input"><X /></Button> : null}
+        <form className="mx-auto grid max-w-3xl gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={(event) => { event.preventDefault(); if (query.trim()) void lookup(query); else if (order?.state === "pending") void markPacked(); }}>
+          <div className="relative">
+            <Hash className="absolute left-3 top-1/2 size-5 -translate-y-1/2 text-primary" />
+            <Input ref={awbInputRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} inputMode="text" aria-label="Enter AWB number" placeholder="Enter the printed AWB number" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
+            {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusAwbInput(); }} aria-label="Clear AWB input"><X /></Button> : null}
           </div>
-          <MobileCameraScanner disabled={busy} onScan={(value) => void lookup(value)} />
-          <Button type="submit" className="h-12 w-full px-4 sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending"))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : <Search />}<span>{query.trim() ? "Find order" : "Packed"}</span></Button>
+          <Button type="submit" className="h-12 w-full px-4 sm:w-auto sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending"))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : confirmMode ? <PackageCheck /> : <Search />}<span>{confirmMode ? "Packed" : "Find AWB"}</span></Button>
         </form>
       </section>
 
@@ -194,10 +194,10 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
           </div>
         ) : (
           <div className="m-auto flex max-w-lg flex-col items-center text-center">
-            <span className={`mb-6 grid size-24 place-items-center rounded-2xl border bg-card shadow-lg ${mode === "error" ? "text-destructive" : "text-primary"}`}>{mode === "loading" ? <Loader2 className="size-11 animate-spin" /> : <ScanBarcode className="size-11" />}</span>
-            <h1 className="text-3xl font-bold tracking-tight">{mode === "error" ? message : mode === "loading" ? "Finding order…" : "Ready to scan"}</h1>
-            <p className="mt-3 text-base text-muted-foreground">{mode === "error" ? "Scan the carrier tracking/AWB label, or enter the Amazon order ID. Receipt and product barcodes are not searchable." : "Scan a carrier tracking/AWB label, marketplace order ID, or Reyo Pack ID."}</p>
-            {mode === "error" ? <Button className="mt-5" variant="outline" onClick={clearOrder}><RotateCcw />Try another scan</Button> : null}
+            <span className={`mb-6 grid size-24 place-items-center rounded-2xl border bg-card shadow-lg ${mode === "error" ? "text-destructive" : "text-primary"}`}>{mode === "loading" ? <Loader2 className="size-11 animate-spin" /> : <Hash className="size-11" />}</span>
+            <h1 className="text-3xl font-bold tracking-tight">{mode === "error" ? message : mode === "loading" ? "Finding order…" : "Ready for AWB"}</h1>
+            <p className="mt-3 text-base text-muted-foreground">{mode === "error" ? "Check the AWB printed beneath the shipping-label barcode and try again." : "Enter the AWB number printed beneath the barcode on the Amazon shipping label."}</p>
+            {mode === "error" ? <Button className="mt-5" variant="outline" onClick={clearOrder}><RotateCcw />Try another AWB</Button> : null}
             <div className="mt-8 rounded-lg border bg-card px-4 py-2 text-sm text-muted-foreground"><span className="font-medium text-foreground">{viewer.displayName}</span> is packing · {message}</div>
           </div>
         )}

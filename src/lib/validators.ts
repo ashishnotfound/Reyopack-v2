@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const scanSchema = z.object({
+export const awbLookupSchema = z.object({
   query: z.string().trim().min(1).max(160),
 });
 

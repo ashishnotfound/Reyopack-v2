@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const orderId = "408-1234567-1234567";
+const awb = "AWB-REYO-24090701";
 let browserErrors: string[];
 
 test.beforeEach(async ({ request, page }) => {
@@ -18,23 +19,22 @@ test.afterEach(async () => {
   expect(browserErrors).toEqual([]);
 });
 
-test("the packing terminal offers live-camera and photo scanning", async ({ page }) => {
-  await page.getByRole("button", { name: "Scan with camera" }).click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Scan with camera" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start rear camera" })).toBeVisible();
-  await expect(page.getByText("Take barcode photo", { exact: true })).toBeVisible();
-  await expect(page.getByText("Barcode images are decoded on this device and are not uploaded.")).toBeVisible();
+test("the packing terminal starts with the AWB input ready", async ({ page }) => {
+  const awbInput = page.getByLabel("Enter AWB number");
+  await expect(page.getByRole("heading", { name: "Ready for AWB" })).toBeVisible();
+  await expect(awbInput).toBeFocused();
+  await expect(page.getByRole("button", { name: "Find AWB" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Scan with camera" })).toHaveCount(0);
 });
 
 test("normal packing records the authenticated worker and reaches admin activity", async ({ page }, testInfo) => {
-  const scanner = page.getByLabel("Scan AWB, barcode, or order ID");
+  const awbInput = page.getByLabel("Enter AWB number");
   await expect(page.locator("body")).not.toHaveText("");
   await expect(page.locator("[data-nextjs-dialog]")).toHaveCount(0);
-  await expect(scanner).toBeFocused();
+  await expect(awbInput).toBeFocused();
   await page.screenshot({ path: `test-results/${testInfo.project.name}-pack-workstation.png`, fullPage: true });
-  await scanner.fill(orderId);
-  await scanner.press("Enter");
+  await awbInput.fill(awb);
+  await awbInput.press("Enter");
   await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
   await expect(page.getByText("FRIEREN-A4-01", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "Mark order packed" }).click();
@@ -44,34 +44,34 @@ test("normal packing records the authenticated worker and reaches admin activity
   await expect(page.getByRole("link", { name: new RegExp(orderId) }).first()).toBeVisible();
 });
 
-test("the same unpacked order can be scanned twenty times without warnings or events", async ({ page }) => {
-  const scanner = page.getByLabel("Scan AWB, barcode, or order ID");
+test("the same unpacked AWB can be searched twenty times without warnings or events", async ({ page }) => {
+  const awbInput = page.getByLabel("Enter AWB number");
   for (let index = 0; index < 20; index += 1) {
-    await scanner.fill(orderId);
-    await scanner.press("Enter");
+    await awbInput.fill(awb);
+    await awbInput.press("Enter");
     await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("heading", { name: "Ready to scan" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ready for AWB" })).toBeVisible();
   }
   await expect(page.getByText(/too many|scan limit|suspicious|recently viewed/i)).toHaveCount(0);
 });
 
 test("packed orders remain inspectable and show permanent attribution", async ({ page }) => {
-  const scanner = page.getByLabel("Scan AWB, barcode, or order ID");
-  await scanner.fill(orderId);
-  await scanner.press("Enter");
+  const awbInput = page.getByLabel("Enter AWB number");
+  await awbInput.fill(awb);
+  await awbInput.press("Enter");
   await page.getByRole("button", { name: "Mark order packed" }).click();
-  await expect(page.getByRole("heading", { name: "Ready to scan" })).toBeVisible({ timeout: 5_000 });
-  await scanner.fill(orderId);
-  await scanner.press("Enter");
+  await expect(page.getByRole("heading", { name: "Ready for AWB" })).toBeVisible({ timeout: 5_000 });
+  await awbInput.fill(awb);
+  await awbInput.press("Enter");
   await expect(page.getByText("Packed by Reyo", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Order already packed" })).toBeDisabled();
 });
 
 test("a rapid double click still creates one packing event", async ({ page }) => {
-  const scanner = page.getByLabel("Scan AWB, barcode, or order ID");
-  await scanner.fill(orderId);
-  await scanner.press("Enter");
+  const awbInput = page.getByLabel("Enter AWB number");
+  await awbInput.fill(awb);
+  await awbInput.press("Enter");
   const packed = page.getByRole("button", { name: "Mark order packed" });
   await expect(packed).toBeEnabled();
   await packed.evaluate((button: HTMLButtonElement) => {
@@ -94,9 +94,9 @@ test("concurrent packing requests produce one new event", async ({ page }) => {
 });
 
 test("a lost connection never reports a local packing success", async ({ page, context }) => {
-  const scanner = page.getByLabel("Scan AWB, barcode, or order ID");
-  await scanner.fill(orderId);
-  await scanner.press("Enter");
+  const awbInput = page.getByLabel("Enter AWB number");
+  await awbInput.fill(awb);
+  await awbInput.press("Enter");
   await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
   await context.setOffline(true);
   await page.getByRole("button", { name: "Mark order packed" }).click();

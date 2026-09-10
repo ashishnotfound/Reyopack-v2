@@ -25,7 +25,7 @@ Set these separately for Production and Preview as appropriate:
 3. Run `npm run test:e2e` with demo mode, then again against a staging Supabase project for authentication/RLS coverage.
 4. Apply database migrations before promoting the matching application build.
 5. Deploy to Vercel, then store the production HTTPS URL as `reyo_pack_app_url` and the matching `CRON_SECRET` as `reyo_pack_cron_secret` in Supabase Vault.
-6. Confirm `/login`, a worker scan/pack, admin activity Realtime, manual sync, cron authorization, and retention status.
+6. Confirm `/login`, a worker AWB lookup/pack, admin activity Realtime, manual sync, cron authorization, and retention status.
 7. Verify the production site URL and callback allow-list in Supabase Auth.
 8. Confirm demo mode is false and no secrets appear in browser bundles or logs.
 
