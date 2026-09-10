@@ -64,7 +64,7 @@ function normalizeAmazonOrder(value: unknown): NormalizedOrder | null {
     const quantity = numberFrom(item.quantityOrdered) ?? 1;
     if (!Number.isInteger(quantity) || quantity <= 0) return null;
     return {
-      externalItemId: stringFrom(item.orderItemId) ?? crypto.randomUUID(),
+      externalItemId: stringFrom(item.orderItemId) ?? stringFrom(product.sellerSku) ?? stringFrom(product.asin) ?? "unmapped-item",
       sellerSku: stringFrom(product.sellerSku) ?? "UNMAPPED",
       asin: stringFrom(product.asin),
       title: stringFrom(product.title) ?? stringFrom(product.sellerSku) ?? "Unmapped Amazon item",

@@ -1,11 +1,26 @@
+"use client";
+
 import Image from "next/image";
 import { PackageOpen } from "lucide-react";
+import { useEffect, useState } from "react";
 
-export function ProductArtwork({ src, title, sku }: { src?: string | null; title: string; sku: string }) {
-  if (src) {
+export function ProductArtwork({ src, productId, title, sku }: { src?: string | null; productId?: string; title: string; sku: string }) {
+  const [loadedImage, setLoadedImage] = useState<{ productId: string; url: string } | null>(null);
+  const imageUrl = src ?? (loadedImage && loadedImage.productId === productId ? loadedImage.url : null);
+  useEffect(() => {
+    if (src || !productId) return;
+    const controller = new AbortController();
+    void fetch(`/api/products/${encodeURIComponent(productId)}/image`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() as Promise<{ imageUrl?: string | null }> : null)
+      .then((result) => { if (result?.imageUrl) setLoadedImage({ productId, url: result.imageUrl }); })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [productId, src]);
+
+  if (imageUrl) {
     return (
       <div className="relative aspect-[4/5] min-h-0 overflow-hidden rounded-xl bg-muted">
-        <Image src={src} alt={title} fill preload unoptimized={src.startsWith("/api/artwork")} sizes="(max-width: 768px) 100vw, 42vw" className="object-contain" />
+        <Image src={imageUrl} alt={title} fill preload unoptimized={imageUrl.startsWith("/api/artwork")} sizes="(max-width: 768px) 100vw, 42vw" className="object-contain" />
       </div>
     );
   }

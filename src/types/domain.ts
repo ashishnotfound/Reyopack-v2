@@ -35,8 +35,28 @@ export interface PackOrder {
   awb?: string | null;
   marketplace: string;
   state: OrderState;
+  shipByDate?: string | null;
+  handedOver?: boolean;
   items: PackOrderItem[];
   packing: PackingInfo | null;
+}
+
+export interface OrderOverview {
+  goingToday: number;
+  leftToPack: number;
+  packedToday: number;
+  waitingForPickup: number;
+  totalOrders: number;
+  overdue: number;
+  missingDate: number;
+  date: string;
+}
+
+export interface PaginatedOrders {
+  orders: PackOrder[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface PackingActivity {

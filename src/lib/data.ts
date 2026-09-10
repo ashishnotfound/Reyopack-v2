@@ -16,6 +16,8 @@ import type {
   LocationSummary,
   PackOrder,
   PackingActivity,
+  OrderOverview,
+  PaginatedOrders,
   ProductSummary,
   WorkerSummary,
 } from "@/types/domain";
@@ -61,9 +63,7 @@ export async function getDashboardData(): Promise<{
   }
 
   const supabase = await createClient();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const since = start.toISOString();
+  const since = indiaDayStartIso();
 
   const [total, packed, cancelled, workers, activityResult, workerEvents] =
     await Promise.all([
@@ -112,24 +112,41 @@ export async function listPackingActivity(limit = 100, workerId?: string): Promi
   return (data ?? []).map(mapActivity);
 }
 
-export async function listOrders(query = ""): Promise<PackOrder[]> {
+export async function listOrdersPage(query = "", page = 1, filter = "all"): Promise<PaginatedOrders> {
   if (isDemoMode()) {
     const orders = [getDemoOrder()!, ...DEMO_ACTIVITY.map(demoActivityOrder)];
-    if (!query) return orders;
     const normalized = query.trim().toLowerCase();
-    return orders.filter((order) => [order.orderNumber, order.marketplaceOrderId, order.awb, ...order.items.map((item) => item.sku)]
+    const matching = !query ? orders : orders.filter((order) => [order.orderNumber, order.marketplaceOrderId, order.awb, ...order.items.map((item) => item.sku)]
       .filter(Boolean)
       .some((value) => value!.toLowerCase().includes(normalized)));
+    return { orders: matching.slice((page - 1) * 50, page * 50), total: matching.length, page, pageSize: 50 };
   }
-  if (!hasSupabaseConfig()) return [];
+  if (!hasSupabaseConfig()) return { orders: [], total: 0, page, pageSize: 50 };
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("admin_search_orders", {
-    p_query: query || null,
-    p_limit: 100,
+  const { data, error } = await supabase.rpc("orders_page", {
+    p_query: query,
+    p_page: page,
+    p_filter: filter,
   });
-  if (error) return [];
-  return ((data ?? []) as PackOrder[]).map((order) => normalizeArtworkOrder(order)!);
+  if (error) return { orders: [], total: 0, page, pageSize: 50 };
+  const result = data as { orders?: PackOrder[]; total?: number } | null;
+  return { orders: (result?.orders ?? []).map((order) => normalizeArtworkOrder(order)!), total: Number(result?.total ?? 0), page, pageSize: 50 };
+}
+
+export async function getOrderOverview(): Promise<OrderOverview> {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  if (isDemoMode()) return { goingToday: 118, leftToPack: 45, packedToday: 73, waitingForPickup: 96, totalOrders: 142, overdue: 7, missingDate: 3, date: today };
+  if (!hasSupabaseConfig()) return { goingToday: 0, leftToPack: 0, packedToday: 0, waitingForPickup: 0, totalOrders: 0, overdue: 0, missingDate: 0, date: today };
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("order_overview");
+  if (error || !data) return { goingToday: 0, leftToPack: 0, packedToday: 0, waitingForPickup: 0, totalOrders: 0, overdue: 0, missingDate: 0, date: today };
+  const value = data as Record<string, unknown>;
+  return {
+    goingToday: Number(value.goingToday ?? 0), leftToPack: Number(value.leftToPack ?? 0), packedToday: Number(value.packedToday ?? 0),
+    waitingForPickup: Number(value.waitingForPickup ?? 0), totalOrders: Number(value.totalOrders ?? 0), overdue: Number(value.overdue ?? 0),
+    missingDate: Number(value.missingDate ?? 0), date: String(value.date ?? today),
+  };
 }
 
 export async function getOrderDetail(id: string): Promise<PackOrder | null> {
@@ -166,11 +183,9 @@ export async function listWorkers(): Promise<WorkerSummary[]> {
   if (isDemoMode()) return DEMO_WORKERS;
   if (!hasSupabaseConfig()) return [];
   const supabase = await createClient();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
   const [profiles, events] = await Promise.all([
     supabase.from("profiles").select("id, display_name, email, active, user_roles(role)").order("display_name"),
-    supabase.from("packing_events").select("worker_user_id").gte("packed_at", start.toISOString()),
+    supabase.from("packing_events").select("worker_user_id").gte("packed_at", indiaDayStartIso()),
   ]);
   const counts = new Map<string, number>();
   for (const event of events.data ?? []) {
@@ -262,9 +277,7 @@ export async function getReports() {
   }
   if (!hasSupabaseConfig()) return { packedOrders: 0, units: 0, byMarketplace: [], topSkus: [] };
   const supabase = await createClient();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const { data } = await supabase.from("packing_events").select("marketplace, sku, quantity").gte("packed_at", start.toISOString());
+  const { data } = await supabase.from("packing_events").select("marketplace, sku, quantity").gte("packed_at", indiaDayStartIso());
   const events = data ?? [];
   return {
     packedOrders: events.length,
@@ -308,6 +321,16 @@ function nextCleanupAt() {
   next.setUTCHours(2, 15, 0, 0);
   if (next <= new Date()) next.setUTCDate(next.getUTCDate() + 1);
   return next.toISOString();
+}
+
+function indiaDayStartIso() {
+  const date = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  return new Date(`${date}T00:00:00+05:30`).toISOString();
 }
 
 function normalizeArtworkOrder(order: PackOrder | null) {

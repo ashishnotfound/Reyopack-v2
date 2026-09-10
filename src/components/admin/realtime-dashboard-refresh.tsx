@@ -20,8 +20,12 @@ export function RealtimeDashboardRefresh({ enabled }: { enabled: boolean }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, refresh)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "packing_events" }, refresh)
       .subscribe();
+    const poll = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 15000);
+    window.addEventListener("focus", refresh);
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
+      clearInterval(poll);
+      window.removeEventListener("focus", refresh);
       void supabase.removeChannel(channel);
     };
   }, [enabled, router]);

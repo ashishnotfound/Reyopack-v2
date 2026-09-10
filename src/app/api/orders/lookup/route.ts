@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { normalizeAwbLookup } from "@/lib/awb";
 import { getViewer } from "@/lib/auth";
 import { lookupOrder } from "@/lib/data";
-import { resolveAmazonProductImage } from "@/lib/marketplaces/amazon-catalog";
 import { awbLookupSchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
@@ -20,16 +19,6 @@ export async function GET(request: Request) {
   const result = await lookupOrder(normalizeAwbLookup(parsed.data.query));
   if (result.error) return NextResponse.json({ error: result.error }, { status: 500 });
   if (!result.data) return NextResponse.json({ error: "AWB not found." }, { status: 404 });
-
-  const firstItem = result.data.items[0];
-  if (firstItem && !firstItem.imageUrl && firstItem.asin) {
-    try {
-      const imageUrl = await resolveAmazonProductImage(firstItem.productId, firstItem.asin, firstItem.title);
-      if (imageUrl) firstItem.imageUrl = imageUrl;
-    } catch {
-      // Artwork is helpful but must never prevent a worker from packing an order.
-    }
-  }
 
   return NextResponse.json({ order: result.data }, { headers: { "Cache-Control": "no-store" } });
 }

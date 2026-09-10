@@ -10,6 +10,10 @@ describe("marketplace state reconciliation", () => {
     expect(resolveSyncedOrderState("packed", "UNSHIPPED")).toBe("packed");
   });
 
+  it("honors a marketplace cancellation after an order was packed", () => {
+    expect(resolveSyncedOrderState("packed", "CANCELLED")).toBe("cancelled");
+  });
+
   it("keeps cancellation terminal when a stale update arrives", () => {
     expect(resolveSyncedOrderState("cancelled", "PENDING")).toBe("cancelled");
   });

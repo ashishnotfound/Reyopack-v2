@@ -1,12 +1,13 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(40);
 
 -- Self-contained fixtures. These changes are rolled back with the test.
 delete from auth.users where id = '00000000-0000-4000-8000-000000000001';
 delete from public.packing_events where order_id = '10000000-0000-4000-8000-000000000001';
 delete from public.order_items where order_id = '10000000-0000-4000-8000-000000000001';
 delete from public.orders where id = '10000000-0000-4000-8000-000000000001';
+delete from public.orders where id in ('10000000-0000-4000-8000-000000000091', '10000000-0000-4000-8000-000000000092');
 delete from public.product_barcodes where barcode = '8900000000001';
 delete from public.products where id = '30000000-0000-4000-8000-000000000001';
 delete from public.locations where id = '50000000-0000-4000-8000-000000000001';
@@ -37,6 +38,11 @@ select has_table('public', 'daily_aggregate_metrics', 'aggregate metrics table e
 select has_function('public', 'lookup_order', array['text'], 'lookup RPC exists');
 select has_function('public', 'pack_order', array['uuid','text','text'], 'atomic pack RPC exists');
 select has_function('public', 'purge_expired_operational_data', array[]::text[], 'retention RPC exists');
+select has_function('public', 'order_overview', array[]::text[], 'pickup overview RPC exists');
+select has_function('public', 'orders_page', array['text','integer','text'], 'paginated order RPC exists');
+select has_function('public', 'claim_sync', array['uuid','uuid'], 'sync lease RPC exists');
+select has_column('public', 'orders', 'ship_by_date', 'orders store the Amazon ship-by date');
+select has_column('public', 'orders', 'handed_over', 'orders track courier handover');
 select has_function('public', 'get_marketplace_credentials', array['text'], 'credential read RPC exists');
 select has_function('public', 'set_marketplace_credentials', array['text','jsonb'], 'credential write RPC exists');
 select is(has_function_privilege('authenticated', 'public.get_marketplace_credentials(text)', 'EXECUTE'), false, 'authenticated users cannot read decrypted credentials');
@@ -46,6 +52,8 @@ select is(has_function_privilege('service_role', 'public.set_marketplace_credent
 select is(has_table_privilege('authenticated', 'public.marketplace_integrations', 'SELECT'), false, 'integration records are not exposed to authenticated browser clients');
 select has_index('public', 'orders', 'orders_awb_unique_idx', 'AWB has an index');
 select has_index('public', 'orders', 'orders_marketplace_order_id_idx', 'marketplace order ID has an index');
+select has_index('public', 'orders', 'orders_ship_by_state_idx', 'ship-by workload has an index');
+select has_index('public', 'orders', 'orders_pagination_idx', 'order pagination has an index');
 select has_index('public', 'packing_events', 'packing_events_worker_idx', 'worker activity has an index');
 select col_is_unique('public', 'packing_events', 'order_id', 'an order can have only one packing event');
 select policies_are(
@@ -75,11 +83,17 @@ select is(public.pack_order('10000000-0000-4000-8000-000000000001', 'test-device
 select is((select count(*)::integer from public.packing_events where order_id = '10000000-0000-4000-8000-000000000001'), 1, 'duplicate packing event is impossible');
 
 set local role postgres;
+insert into public.orders(id, order_number, marketplace_id, marketplace_order_id, state, marketplace_status, packed_at, created_at)
+select '10000000-0000-4000-8000-000000000091', 'RP-OLD-WAITING', id, 'OLD-WAITING-PICKUP', 'packed', 'UNSHIPPED', now() - interval '30 days', now() - interval '30 days' from public.marketplaces where key = 'amazon';
+insert into public.orders(id, order_number, marketplace_id, marketplace_order_id, state, marketplace_status, packed_at, created_at)
+select '10000000-0000-4000-8000-000000000092', 'RP-OLD-HANDED', id, 'OLD-HANDED-OVER', 'packed', 'SHIPPED', now() - interval '30 days', now() - interval '30 days' from public.marketplaces where key = 'amazon';
 insert into public.orders(id, order_number, marketplace_id, marketplace_order_id, state, marketplace_status, created_at)
 select '10000000-0000-4000-8000-000000000090', 'RP-OLD-ACTIVE', id, 'ACTIVE-OLD-ORDER', 'pending', 'UNSHIPPED', now() - interval '30 days' from public.marketplaces where key = 'amazon'
 on conflict (id) do nothing;
 select lives_ok($$ select public.purge_expired_operational_data() $$, 'retention cleanup runs successfully');
 select is((select count(*)::integer from public.orders where id = '10000000-0000-4000-8000-000000000090'), 1, 'old active orders are preserved');
+select is((select count(*)::integer from public.orders where id = '10000000-0000-4000-8000-000000000091'), 1, 'packed orders waiting for pickup are preserved');
+select is((select count(*)::integer from public.orders where id = '10000000-0000-4000-8000-000000000092'), 0, 'old handed-over orders are eligible for cleanup');
 select is((select count(*)::integer from public.products where id = '30000000-0000-4000-8000-000000000001'), 1, 'permanent products are preserved');
 
 select * from finish();

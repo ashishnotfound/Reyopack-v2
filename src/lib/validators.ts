@@ -70,5 +70,5 @@ export const importRowSchema = z.object({
 });
 
 export const importPayloadSchema = z.object({
-  rows: z.array(importRowSchema).min(1).max(5_000),
+  rows: z.array(importRowSchema).min(1).max(1_000),
 });

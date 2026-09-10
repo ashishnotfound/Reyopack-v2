@@ -34,6 +34,7 @@ import type { Viewer } from "@/types/domain";
 
 const navigation = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { href: "/admin/pickup", label: "Order Overview / Pickup", icon: ClipboardList },
   { href: "/admin/activity", label: "Packing Activity", icon: Activity },
   { href: "/admin/orders", label: "Orders", icon: PackageSearch },
   { href: "/admin/orders/import", label: "CSV Import", icon: Upload },

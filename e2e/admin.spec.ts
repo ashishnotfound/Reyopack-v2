@@ -19,6 +19,7 @@ test("every admin surface renders real operational content", async ({ page }) =>
   const routes: Array<[string, string]> = [
     ["/admin", "Operations dashboard"],
     ["/admin/activity", "Packing activity"],
+    ["/admin/pickup", "Order Overview / Pickup"],
     ["/admin/orders", "Orders"],
     ["/admin/orders/10000000-0000-4000-8000-000000000001", "Order 408-1234567-1234567"],
     ["/admin/orders/import", "Import orders"],
@@ -47,4 +48,9 @@ test("every admin surface renders real operational content", async ({ page }) =>
   await page.goto("/admin/integrations");
   await expect(page.getByRole("heading", { name: "Amazon SP-API credentials" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save & verify" })).toBeDisabled();
+  await page.goto("/admin/pickup");
+  await expect(page.getByText("Going Today", { exact: true })).toBeVisible();
+  await expect(page.getByText("Left to Pack", { exact: true })).toBeVisible();
+  await expect(page.getByText("Waiting for Pickup", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sync now" })).toBeVisible();
 });

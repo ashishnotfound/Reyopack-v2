@@ -1,8 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, CameraOff, ImageUp, Loader2, ScanLine } from "lucide-react";
-import { toast } from "sonner";
+import { Camera, CameraOff, Loader2, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,7 +15,7 @@ import { isLikelyAwb, normalizeAwbLookup } from "@/lib/awb";
 import { playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
 import type { IScannerControls } from "@zxing/browser";
 
-type ScannerState = "idle" | "starting" | "active" | "reading" | "error";
+type ScannerState = "idle" | "starting" | "active" | "error";
 
 export function MobileCameraScanner({
   disabled,
@@ -28,7 +27,6 @@ export function MobileCameraScanner({
   soundEnabled: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const photoInputRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const sessionRef = useRef(0);
   const resultHandledRef = useRef(false);
@@ -56,7 +54,6 @@ export function MobileCameraScanner({
     if (soundEnabled) playScanBeep();
     stopCamera();
     setOpen(false);
-    toast.success(`AWB ${awb} captured`);
     onAwb(awb);
     return true;
   }, [onAwb, soundEnabled, stopCamera]);
@@ -65,7 +62,7 @@ export function MobileCameraScanner({
     if (soundEnabled) primeAudioFeedback();
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setScannerState("error");
-      setErrorMessage("Live AWB scanning needs an HTTPS address. On this local-network page, use Take AWB photo below.");
+      setErrorMessage("Open the HTTPS app address to use live AWB scanning.");
       return;
     }
 
@@ -76,12 +73,12 @@ export function MobileCameraScanner({
     setErrorMessage("");
 
     try {
-      const { BrowserMultiFormatReader } = await import("@zxing/browser");
+      const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
       const video = videoRef.current;
       if (!video || session !== sessionRef.current) return;
-      const reader = new BrowserMultiFormatReader(undefined, {
-        delayBetweenScanAttempts: 200,
-        delayBetweenScanSuccess: 750,
+      const reader = new BrowserMultiFormatReader(new Map([[DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.ITF, BarcodeFormat.CODABAR, BarcodeFormat.EAN_13]]]), {
+        delayBetweenScanAttempts: 35,
+        delayBetweenScanSuccess: 0,
       });
       const controls = await reader.decodeFromConstraints({
         audio: false,
@@ -91,7 +88,7 @@ export function MobileCameraScanner({
           height: { ideal: 720 },
         },
       }, video, (result) => {
-        if (result) finishAwbScan(result.getText());
+        if (result && session === sessionRef.current) finishAwbScan(result.getText());
       });
 
       if (session !== sessionRef.current) {
@@ -107,32 +104,6 @@ export function MobileCameraScanner({
     }
   }, [finishAwbScan, soundEnabled, stopCamera]);
 
-  const scanPhoto = useCallback(async (file: File | undefined) => {
-    if (!file) return;
-    stopCamera();
-    resultHandledRef.current = false;
-    const session = sessionRef.current;
-    setScannerState("reading");
-    setErrorMessage("");
-    const imageUrl = URL.createObjectURL(file);
-    try {
-      const { BrowserMultiFormatReader } = await import("@zxing/browser");
-      const result = await new BrowserMultiFormatReader().decodeFromImageUrl(imageUrl);
-      if (session !== sessionRef.current) return;
-      if (!finishAwbScan(result.getText())) {
-        setScannerState("error");
-        setErrorMessage("That photo decoded a different code. Fill the frame with only the long AWB barcode and try again.");
-      }
-    } catch {
-      if (session === sessionRef.current) {
-        setScannerState("error");
-        setErrorMessage("No AWB barcode was found. Fill the frame, avoid glare, and try again.");
-      }
-    } finally {
-      URL.revokeObjectURL(imageUrl);
-    }
-  }, [finishAwbScan, stopCamera]);
-
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     if (!nextOpen) stopCamera();
     resultHandledRef.current = false;
@@ -141,7 +112,9 @@ export function MobileCameraScanner({
     setOpen(nextOpen);
   }, [stopCamera]);
 
-  const working = scannerState === "starting" || scannerState === "reading";
+  useEffect(() => { void Promise.all([import("@zxing/browser"), import("@zxing/library")]).catch(() => undefined); }, []);
+
+  const working = scannerState === "starting";
 
   return (
     <>
@@ -150,7 +123,7 @@ export function MobileCameraScanner({
         Scan AWB
       </Button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="overflow-hidden p-0 sm:max-w-lg">
+        <DialogContent className="overflow-hidden p-0 sm:max-w-lg" onOpenAutoFocus={(event) => { event.preventDefault(); void startCamera(); }}>
           <DialogHeader className="px-5 pt-5">
             <DialogTitle>Scan AWB barcode</DialogTitle>
             <DialogDescription>Aim at the single long barcode above the printed AWB number. Avoid the square codes lower on the label.</DialogDescription>
@@ -165,37 +138,21 @@ export function MobileCameraScanner({
               <div className="absolute inset-0 grid place-items-center bg-black/65 p-6 text-center text-white">
                 <div className="flex max-w-sm flex-col items-center">
                   {working ? <Loader2 className="mb-3 size-9 animate-spin" /> : errorMessage ? <CameraOff className="mb-3 size-9" /> : <ScanLine className="mb-3 size-9" />}
-                  <p className="font-semibold">{working ? scannerState === "reading" ? "Reading AWB photo…" : "Starting camera…" : errorMessage || "Ready for the AWB barcode"}</p>
-                  {!working && !errorMessage ? <p className="mt-2 text-xs text-white/70">Camera access starts only when you tap the button below.</p> : null}
+                  <p className="font-semibold">{working ? "Starting camera…" : errorMessage || "Ready for the AWB barcode"}</p>
+                  {!working && !errorMessage ? <p className="mt-2 text-xs text-white/70">Opening your rear camera automatically.</p> : null}
                 </div>
               </div>
             ) : null}
           </div>
 
           <p className="px-5 text-xs text-muted-foreground">The barcode is decoded on this device and the photo is not uploaded.</p>
-          <DialogFooter className="mx-0 mb-0">
+          {errorMessage ? <DialogFooter className="mx-0 mb-0">
             <Button type="button" onClick={() => void startCamera()} disabled={working || scannerState === "active"}>
               {scannerState === "starting" ? <Loader2 className="animate-spin" /> : <Camera />}
-              {scannerState === "active" ? "Camera active" : "Start rear camera"}
+              {scannerState === "active" ? "Camera active" : "Retry camera"}
             </Button>
-            <Button type="button" variant="outline" onClick={() => photoInputRef.current?.click()} disabled={working}>
-              <ImageUp />
-              Take AWB photo
-            </Button>
-            <input
-              ref={photoInputRef}
-              className="sr-only"
-              type="file"
-              accept="image/*"
-              capture="environment"
-              aria-label="Choose AWB barcode photo"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = "";
-                void scanPhoto(file);
-              }}
-            />
-          </DialogFooter>
+
+          </DialogFooter> : null}
         </DialogContent>
       </Dialog>
     </>
@@ -203,9 +160,9 @@ export function MobileCameraScanner({
 }
 
 function cameraErrorMessage(error: unknown) {
-  if (!(error instanceof DOMException)) return "The camera could not be started. Try taking an AWB photo instead.";
+  if (!(error instanceof DOMException)) return "The camera could not be started. Check camera permissions and retry.";
   if (error.name === "NotAllowedError" || error.name === "SecurityError") return "Camera access was blocked. Allow camera permission for Reyo Pack and try again.";
   if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") return "No camera was found on this device.";
   if (error.name === "NotReadableError" || error.name === "TrackStartError") return "The camera is busy in another app. Close it there and try again.";
-  return "The camera could not be started. Try taking an AWB photo instead.";
+  return "The camera could not be started. Check camera permissions and retry.";
 }

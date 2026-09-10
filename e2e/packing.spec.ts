@@ -15,8 +15,12 @@ test.beforeEach(async ({ request, page }) => {
   await page.goto("/pack");
 });
 
-test.afterEach(async () => {
-  expect(browserErrors).toEqual([]);
+test.afterEach(async ({}, testInfo) => {
+  const unexpectedErrors = browserErrors.filter((message) => !(
+    testInfo.title === "a lost connection never reports a local packing success"
+    && message.includes("ERR_INTERNET_DISCONNECTED")
+  ));
+  expect(unexpectedErrors).toEqual([]);
 });
 
 test("the packing terminal starts with AWB entry and camera scanning ready", async ({ page }) => {
@@ -27,8 +31,10 @@ test("the packing terminal starts with AWB entry and camera scanning ready", asy
   await page.getByRole("button", { name: "Scan AWB with camera" }).click();
   await expect(page.getByRole("heading", { name: "Scan AWB barcode" })).toBeVisible();
   await expect(page.getByText("Avoid the square codes lower on the label.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start rear camera" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Take AWB photo" })).toBeVisible();
+  await expect(page.getByLabel("Camera preview")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start rear camera" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Take AWB photo" })).toHaveCount(0);
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
 });
 
 test("normal packing records the authenticated worker and reaches admin activity", async ({ page }, testInfo) => {

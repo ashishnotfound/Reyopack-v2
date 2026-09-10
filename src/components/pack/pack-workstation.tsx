@@ -54,6 +54,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
   const lookup = useCallback(async (rawQuery: string) => {
     const awb = normalizeAwbLookup(rawQuery);
     if (!awb || mode === "loading" || mode === "packing") return;
+    if (successTimer.current) { clearTimeout(successTimer.current); successTimer.current = null; }
     if (!navigator.onLine) {
       setMode("error");
       setMessage("Connection lost. Reconnect before searching.");
@@ -161,7 +162,7 @@ export function PackWorkstation({ viewer }: { viewer: Viewer }) {
           </div>
         ) : order && item ? (
           <div className="mx-auto grid w-full max-w-6xl min-h-0 gap-5 lg:grid-cols-[minmax(360px,0.9fr)_minmax(420px,1.1fr)]">
-            <ProductArtwork src={item.imageUrl} title={item.title} sku={item.sku} />
+            <ProductArtwork src={item.imageUrl} productId={item.productId} title={item.title} sku={item.sku} />
             <Card className="min-h-0 border-border/80 shadow-xl shadow-black/5">
               <CardContent className="flex h-full flex-col p-5 sm:p-7">
                 <div className="flex items-start justify-between gap-4">
