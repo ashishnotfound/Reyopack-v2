@@ -12,7 +12,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { isLikelyAwb, normalizeAwbLookup } from "@/lib/awb";
-import { playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
+import { playErrorTone, playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
+import { vibrateError, vibrateScanDetected } from "@/lib/native-feedback";
 import type { IScannerControls } from "@zxing/browser";
 
 type ScannerState = "idle" | "starting" | "active" | "error";
@@ -52,6 +53,7 @@ export function MobileCameraScanner({
     if (!isLikelyAwb(awb) || resultHandledRef.current) return false;
     resultHandledRef.current = true;
     if (soundEnabled) playScanBeep();
+    void vibrateScanDetected();
     stopCamera();
     setOpen(false);
     onAwb(awb);
@@ -101,6 +103,8 @@ export function MobileCameraScanner({
       stopCamera();
       setScannerState("error");
       setErrorMessage(cameraErrorMessage(error));
+      if (soundEnabled) playErrorTone();
+      void vibrateError();
     }
   }, [finishAwbScan, soundEnabled, stopCamera]);
 

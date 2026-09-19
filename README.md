@@ -24,6 +24,16 @@ For a UI-only local demonstration, set `REYO_PACK_DEMO_MODE=true`. Demo mode is 
 
 Run `npm run verify` for type checking, linting, unit tests, and a production build. Run `npm run test:e2e` for desktop and mobile Chromium workflows. `npm run test:db` uses `SUPABASE_DB_URL` when configured and otherwise checks the local Supabase database; its fixtures and assertions run inside a rolled-back transaction.
 
+## Android app
+
+The Capacitor Android app uses package ID `com.reyo.pack` and opens the same HTTPS production Reyo Pack service as the web app, so workers share the existing Supabase authentication, orders, and realtime data. No server credentials are bundled into the APK.
+
+Requirements: Node.js 22+, JDK 21, and Android Studio with Android SDK 36. Install dependencies with `npm install`, then run `npm run android:sync` and `npm run android:open`. Build an installable debug APK with `npm run android:apk`; the output is `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+The default hosted URL is `https://reyopack-v2.vercel.app/pack`. Set `CAPACITOR_SERVER_URL` to another HTTPS deployment before `npm run android:sync` when targeting a different environment. Camera scanning requires Android camera permission and a reachable HTTPS deployment.
+
+For a signed release, copy `android/keystore.properties.example` to `android/keystore.properties`, point it at a private keystore, fill in the local signing values, and run `npm run android:bundle` (or `cd android && gradlew bundleRelease`). Signing files and passwords are ignored by Git.
+
 ## Documentation
 
 - [Architecture](./ARCHITECTURE.md)

@@ -4,7 +4,7 @@ import Image from "next/image";
 import { PackageOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 
-export function ProductArtwork({ src, productId, title, sku }: { src?: string | null; productId?: string; title: string; sku: string }) {
+export function ProductArtwork({ src, productId, title, sku, preload = false }: { src?: string | null; productId?: string; title: string; sku: string; preload?: boolean }) {
   const [loadedImage, setLoadedImage] = useState<{ productId: string; url: string } | null>(null);
   const imageUrl = src ?? (loadedImage && loadedImage.productId === productId ? loadedImage.url : null);
   useEffect(() => {
@@ -20,7 +20,7 @@ export function ProductArtwork({ src, productId, title, sku }: { src?: string | 
   if (imageUrl) {
     return (
       <div className="relative aspect-[4/5] min-h-0 overflow-hidden rounded-xl bg-muted">
-        <Image src={imageUrl} alt={title} fill preload unoptimized={imageUrl.startsWith("/api/artwork")} sizes="(max-width: 768px) 100vw, 42vw" className="object-contain" />
+        <Image src={imageUrl} alt={title} fill preload={preload} unoptimized={imageUrl.startsWith("/api/artwork")} sizes="(max-width: 768px) 100vw, 42vw" className="object-contain" />
       </div>
     );
   }

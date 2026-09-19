@@ -45,8 +45,8 @@ test("normal packing records the authenticated worker and reaches admin activity
   await page.screenshot({ path: `test-results/${testInfo.project.name}-pack-workstation.png`, fullPage: true });
   await awbInput.fill(awb);
   await awbInput.press("Enter");
-  await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
-  await expect(page.getByText("FRIEREN-A4-01", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Spider-Man Poster" })).toBeVisible();
+  await expect(page.getByText("SPIDER-MAN-A4-01", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "Mark order packed" }).click();
   await expect(page.getByRole("heading", { name: "PACKED" })).toBeVisible();
   await expect(page.getByText("Packed by Reyo", { exact: true })).toBeVisible();
@@ -59,7 +59,7 @@ test("the same unpacked AWB can be searched twenty times without warnings or eve
   for (let index = 0; index < 20; index += 1) {
     await awbInput.fill(awb);
     await awbInput.press("Enter");
-    await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Spider-Man Poster" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("heading", { name: "Ready for AWB" })).toBeVisible();
   }
@@ -107,10 +107,32 @@ test("a lost connection never reports a local packing success", async ({ page, c
   const awbInput = page.getByLabel("Enter AWB number");
   await awbInput.fill(awb);
   await awbInput.press("Enter");
-  await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Spider-Man Poster" })).toBeVisible();
   await context.setOffline(true);
   await page.getByRole("button", { name: "Mark order packed" }).click();
   await expect(page.getByText("CONNECTION LOST")).toBeVisible();
   await expect(page.getByRole("heading", { name: "PACKED" })).toHaveCount(0);
   await context.setOffline(false);
+});
+
+test("every product receives the full packing layout with a prominent quantity", async ({ page }) => {
+  const awbInput = page.getByLabel("Enter AWB number");
+  await awbInput.fill(awb);
+  await awbInput.press("Enter");
+  await expect(page.getByRole("status", { name: "5 products, 9 total pieces" })).toContainText("5 PRODUCTS•9 TOTAL PIECES");
+  await expect(page.getByText("Additional", { exact: true })).toHaveCount(4);
+
+  const expected = [
+    ["Spider-Man Poster", 2],
+    ["Reze Poster", 1],
+    ["Berserk Poster", 3],
+    ["Gojo Poster", 1],
+    ["Chainsaw Man Poster", 2],
+  ] as const;
+  for (const [title, quantity] of expected) {
+    const product = page.getByRole("region", { name: `${title}, quantity ${quantity}` });
+    await expect(product.getByRole("heading", { name: title })).toBeVisible();
+    await expect(product.getByText("Quantity", { exact: true })).toBeVisible();
+    await expect(product.getByText(String(quantity), { exact: true })).toBeVisible();
+  }
 });

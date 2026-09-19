@@ -15,10 +15,11 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { normalizeAwbLookup } from "@/lib/awb";
-import { playSuccessTone } from "@/lib/audio-feedback";
+import { playErrorTone, playSuccessTone } from "@/lib/audio-feedback";
 import { formatDateTime } from "@/lib/format";
+import { vibrateError, vibratePackingSuccess } from "@/lib/native-feedback";
 import { setSoundPreference, useSoundPreference } from "@/lib/sound-preference";
-import type { PackOrder, Viewer } from "@/types/domain";
+import type { OrderState, PackOrder, PackOrderItem, Viewer } from "@/types/domain";
 
 type Mode = "idle" | "loading" | "ready" | "packing" | "success" | "error";
 
@@ -58,6 +59,8 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
     if (!navigator.onLine) {
       setMode("error");
       setMessage("Connection lost. Reconnect before searching.");
+      if (soundEnabled) playErrorTone();
+      void vibrateError();
       return;
     }
 
@@ -75,16 +78,20 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
       setOrder(null);
       setMode("error");
       setMessage(error instanceof Error ? error.message : "Order lookup failed.");
+      if (soundEnabled) playErrorTone();
+      void vibrateError();
     } finally {
       focusAwbInput();
     }
-  }, [focusAwbInput, mode]);
+  }, [focusAwbInput, mode, soundEnabled]);
 
   const markPacked = useCallback(async () => {
     if (!order || order.state !== "pending" || mode === "packing") return;
     if (!navigator.onLine) {
       setMode("error");
       setMessage("Connection lost. Nothing was marked packed.");
+      if (soundEnabled) playErrorTone();
+      void vibrateError();
       return;
     }
     setMode("packing");
@@ -102,11 +109,14 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
       setMode("success");
       setMessage(payload.alreadyPacked ? "Already packed" : `Packed by ${payload.order.packing?.workerDisplayName ?? viewer.displayName}`);
       if (soundEnabled && !payload.alreadyPacked) playSuccessTone();
+      if (!payload.alreadyPacked) void vibratePackingSuccess();
       successTimer.current = setTimeout(clearOrder, 850);
     } catch (error) {
       setMode("error");
       setMessage(error instanceof Error ? error.message : "Packing failed. Nothing was changed.");
       toast.error("Packing was not confirmed");
+      if (soundEnabled) playErrorTone();
+      void vibrateError();
       focusAwbInput();
     }
   }, [clearOrder, focusAwbInput, mode, order, soundEnabled, viewer.displayName]);
@@ -122,9 +132,9 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [clearOrder]);
 
-  const item = order?.items[0];
   const busy = mode === "loading" || mode === "packing";
   const confirmMode = !query.trim() && order?.state === "pending";
+  const totalPieces = order?.items.reduce((total, item) => total + item.quantity, 0) ?? 0;
 
   return (
     <main className="flex min-h-screen flex-col bg-background">
@@ -161,23 +171,14 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
             <h1 className="text-5xl font-black tracking-[-0.06em]">PACKED</h1>
             <p className="mt-3 text-xl text-muted-foreground">{message}</p>
           </div>
-        ) : order && item ? (
-          <div className="mx-auto grid w-full max-w-6xl min-h-0 gap-5 lg:grid-cols-[minmax(360px,0.9fr)_minmax(420px,1.1fr)]">
-            <ProductArtwork src={item.imageUrl} productId={item.productId} title={item.title} sku={item.sku} />
-            <Card className="min-h-0 border-border/80 shadow-xl shadow-black/5">
-              <CardContent className="flex h-full flex-col p-5 sm:p-7">
-                <div className="flex items-start justify-between gap-4">
-                  <div><p className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-primary">Product</p><h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{item.title}</h1></div>
-                  <Badge variant={order.state === "packed" ? "default" : order.state === "cancelled" ? "destructive" : "secondary"} className="shrink-0 px-3 py-1.5 text-sm">{order.state.toUpperCase()}</Badge>
-                </div>
-                <div className="mt-6 grid grid-cols-2 gap-3">
-                  <DataBlock label="SKU" value={item.sku} mono />
-                  <DataBlock label="Quantity" value={String(item.quantity)} large />
-                  {item.variation ? <DataBlock label="Variation" value={item.variation} /> : null}
-                  {item.location ? <DataBlock label="Location" value={item.location} /> : null}
-                </div>
-                {order.items.length > 1 ? <div className="mt-5 rounded-xl border border-amber-500/35 bg-amber-500/10 p-4"><p className="font-semibold text-amber-700 dark:text-amber-300">Also pack {order.items.length - 1} additional product{order.items.length === 2 ? "" : "s"}</p><div className="mt-3 space-y-3">{order.items.slice(1).map((additional) => <div key={additional.id} className="rounded-lg border bg-background/70 p-3"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{additional.title}</p><p className="mono-data mt-1 text-xs text-muted-foreground">{additional.sku}{additional.variation ? ` · ${additional.variation}` : ""}</p>{additional.location ? <p className="mt-1 text-xs text-muted-foreground">{additional.location}</p> : null}</div><Badge variant="secondary" className="shrink-0">Qty {additional.quantity}</Badge></div></div>)}</div></div> : null}
-                <Separator className="my-6" />
+        ) : order && order.items.length > 0 ? (
+          <div className="mx-auto w-full max-w-6xl space-y-7">
+            <div className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl border px-4 py-3 text-center font-black tracking-[0.1em] ${order.items.length > 1 || totalPieces > 1 ? "border-amber-500/45 bg-amber-500/10 text-amber-800 dark:text-amber-200" : "bg-card text-foreground"}`} role="status" aria-label={`${order.items.length} products, ${totalPieces} total pieces`}>
+              <span>{order.items.length} {order.items.length === 1 ? "PRODUCT" : "PRODUCTS"}</span><span aria-hidden="true">•</span><span>{totalPieces} TOTAL {totalPieces === 1 ? "PIECE" : "PIECES"}</span>
+            </div>
+            {order.items.map((product, index) => <ProductPackingCard key={product.id} item={product} additional={index > 0} position={index + 1} totalProducts={order.items.length} state={order.state} preloadImage={index === 0} />)}
+            <Card className="border-border/80 shadow-xl shadow-black/5">
+              <CardContent className="p-5 sm:p-7">
                 <dl className="grid gap-4 sm:grid-cols-2">
                   <Info label="Order ID" value={order.marketplaceOrderId} mono />
                   <Info label="AWB" value={order.awb ?? "Not assigned"} mono />
@@ -190,7 +191,7 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
                     <div><p className="font-semibold">Packed by {order.packing.workerDisplayName}</p><p className="mt-1 text-sm text-muted-foreground">{formatDateTime(order.packing.packedAt)}</p></div>
                   </div>
                 ) : null}
-                <div className="mt-auto pt-7">
+                <div className="pt-7">
                   <Button aria-label={order.state === "packed" ? "Order already packed" : order.state === "cancelled" ? "Cancelled order cannot be packed" : "Mark order packed"} className="h-16 w-full text-xl font-black tracking-[0.12em]" onClick={() => void markPacked()} disabled={busy || order.state !== "pending"}>{mode === "packing" ? <Loader2 className="size-6 animate-spin" /> : order.state === "packed" ? <CheckCircle2 className="size-6" /> : <PackageCheck className="size-6" />}{order.state === "cancelled" ? "CANCELLED" : "PACKED"}</Button>
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground"><span>Enter to confirm</span><Button variant="ghost" size="sm" onClick={clearOrder}><RotateCcw />Clear · Esc</Button></div>
                 </div>
@@ -211,8 +212,31 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
   );
 }
 
-function DataBlock({ label, value, mono, large }: { label: string; value: string; mono?: boolean; large?: boolean }) {
-  return <div className="rounded-xl border bg-muted/45 p-4"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</p><p className={`mt-1.5 font-semibold ${mono ? "mono-data" : ""} ${large ? "text-3xl text-primary" : "text-base"}`}>{value}</p></div>;
+function ProductPackingCard({ item, additional, position, totalProducts, state, preloadImage }: { item: PackOrderItem; additional: boolean; position: number; totalProducts: number; state: OrderState; preloadImage: boolean }) {
+  return <section aria-label={`${item.title}, quantity ${item.quantity}`} className="space-y-3">
+    {additional ? <div className="flex items-center gap-3"><p className="shrink-0 text-sm font-black uppercase tracking-[0.2em] text-amber-700 dark:text-amber-300">Additional</p><Separator className="min-w-0 flex-1 data-horizontal:w-auto" /></div> : null}
+    <div className="grid min-h-0 gap-5 lg:grid-cols-[minmax(360px,0.9fr)_minmax(420px,1.1fr)]">
+      <ProductArtwork src={item.imageUrl} productId={item.productId} title={item.title} sku={item.sku} preload={preloadImage} />
+      <Card className="min-h-0 border-border/80 shadow-xl shadow-black/5">
+        <CardContent className="flex h-full flex-col p-5 sm:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div><p className={`mb-2 text-sm font-semibold uppercase tracking-[0.16em] ${additional ? "text-amber-700 dark:text-amber-300" : "text-primary"}`}>{additional ? "Additional" : "Product"} {position} of {totalProducts}</p><h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{item.title}</h2></div>
+            <Badge variant={state === "packed" ? "default" : state === "cancelled" ? "destructive" : "secondary"} className="shrink-0 px-3 py-1.5 text-sm">{state.toUpperCase()}</Badge>
+          </div>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <DataBlock label="SKU" value={item.sku} mono />
+            <DataBlock label="Quantity" value={String(item.quantity)} large accent={item.quantity > 1} />
+            {item.variation ? <DataBlock label="Variation" value={item.variation} /> : null}
+            {item.location ? <DataBlock label="Location" value={item.location} /> : null}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  </section>;
+}
+
+function DataBlock({ label, value, mono, large, accent }: { label: string; value: string; mono?: boolean; large?: boolean; accent?: boolean }) {
+  return <div className={`rounded-xl border p-4 ${accent ? "border-amber-500/55 bg-amber-500/15" : "bg-muted/45"}`}><p className={`text-xs font-semibold uppercase tracking-wider ${accent ? "text-amber-800 dark:text-amber-200" : "text-muted-foreground"}`}>{label}</p><p className={`mt-1.5 font-semibold ${mono ? "mono-data" : ""} ${large ? `text-3xl ${accent ? "text-amber-800 dark:text-amber-200" : "text-primary"}` : "text-base"}`}>{value}</p></div>;
 }
 
 function Info({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

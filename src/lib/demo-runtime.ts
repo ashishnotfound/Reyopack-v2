@@ -14,7 +14,7 @@ export function getDemoOrder(query?: string): PackOrder | null {
       DEMO_ORDER.orderNumber,
       DEMO_ORDER.marketplaceOrderId,
       DEMO_ORDER.awb,
-      DEMO_ORDER.items[0].sku,
+      ...DEMO_ORDER.items.map((item) => item.sku),
     ].filter(Boolean) as string[];
     if (!values.some((value) => value.toLowerCase() === normalized)) return null;
   }
@@ -54,7 +54,7 @@ export function getDemoActivity(): PackingActivity[] {
     marketplaceOrderId: DEMO_ORDER.marketplaceOrderId,
     productTitle: DEMO_ORDER.items[0].title,
     sku: DEMO_ORDER.items[0].sku,
-    quantity: DEMO_ORDER.items[0].quantity,
+    quantity: DEMO_ORDER.items.reduce((total, item) => total + item.quantity, 0),
     marketplace: DEMO_ORDER.marketplace,
     packedAt: event.packedAt,
   }, ...DEMO_ACTIVITY];

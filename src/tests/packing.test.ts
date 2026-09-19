@@ -27,4 +27,17 @@ describe("atomic demo packing contract", () => {
     expect(rescanned?.state).toBe("packed");
     expect(rescanned?.packing?.workerDisplayName).toBe("Reyo");
   });
+
+  it("returns every product in a multi-product order", () => {
+    const order = getDemoOrder("CHAINSAW-A4-05");
+    expect(order?.items).toHaveLength(5);
+    expect(order?.items.map((item) => item.title)).toEqual([
+      "Spider-Man Poster",
+      "Reze Poster",
+      "Berserk Poster",
+      "Gojo Poster",
+      "Chainsaw Man Poster",
+    ]);
+    expect(order?.items.reduce((total, item) => total + item.quantity, 0)).toBe(9);
+  });
 });

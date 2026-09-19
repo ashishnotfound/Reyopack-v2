@@ -21,6 +21,10 @@ export function playSuccessTone() {
   playTone(720, 960, 0.16, 0.06);
 }
 
+export function playErrorTone() {
+  playTone(360, 190, 0.18, 0.07);
+}
+
 function playTone(startFrequency: number, endFrequency: number, duration: number, volume: number) {
   const context = getAudioContext();
   if (!context) return;

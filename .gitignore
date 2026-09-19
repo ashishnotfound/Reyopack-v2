@@ -23,6 +23,18 @@
 # production
 /build
 
+# Android / Capacitor build output and private signing material
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/captures/
+/artifacts/*.apk
+/artifacts/*.aab
+*.jks
+*.keystore
+keystore.properties
+
 # misc
 .DS_Store
 *.pem

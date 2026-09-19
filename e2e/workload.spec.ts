@@ -18,7 +18,7 @@ test("workload opens orders for repeat checking and updates after packing", asyn
   await expect(page.getByRole("heading", { name: "Order status" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unpacked Today 1", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Checking / Open order" }).click();
-  await expect(page.getByRole("heading", { name: "Frieren A4 Art Print" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Spider-Man Poster" })).toBeVisible();
   await page.getByRole("link", { name: "Orders", exact: true }).click();
   await expect(page.getByRole("button", { name: "Unpacked Today 1", exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Checking / Open order" }).click();
