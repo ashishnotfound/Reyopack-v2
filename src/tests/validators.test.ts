@@ -8,15 +8,15 @@ describe("request validation", () => {
     expect(awbLookupSchema.safeParse({ query: "   " }).success).toBe(false);
   });
   it("normalizes printed AWB labels without changing internal AWB identifiers", () => {
-    expect(normalizeAwbLookup(" AWB 3723 8571 2343 ")).toBe("372385712343");
+    expect(normalizeAwbLookup(" AWB 9900 0000 0001 ")).toBe("990000000001");
     expect(normalizeAwbLookup("awb no. # tba12-34 ")).toBe("TBA12-34");
     expect(normalizeAwbLookup("AWB-REYO-24090701")).toBe("AWB-REYO-24090701");
   });
   it("accepts AWB-shaped camera results and rejects unrelated label codes", () => {
-    expect(isLikelyAwb("372385712343")).toBe(true);
+    expect(isLikelyAwb("990000000001")).toBe(true);
     expect(isLikelyAwb("TBA12-345678")).toBe(true);
     expect(isLikelyAwb("MAAG")).toBe(false);
-    expect(isLikelyAwb("https://example.com/receipt/372385712343")).toBe(false);
+    expect(isLikelyAwb("https://example.com/receipt/990000000001")).toBe(false);
   });
   it("rejects corrupted CSV quantities", () => {
     const result = importPayloadSchema.safeParse({ rows: [{ order_id: "1", marketplace_order_id: "A", marketplace: "Amazon", sku: "SKU", product_title: "Poster", quantity: 0 }] });

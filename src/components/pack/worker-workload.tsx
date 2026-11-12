@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { SyncNowButton } from "@/components/admin/sync-now-button";
 import { createClient } from "@/lib/supabase/client";
 import { formatDateTime } from "@/lib/format";
+import { shippingStatus } from "@/lib/shipping";
 import type { PackOrder, Viewer } from "@/types/domain";
 
 type Workload = {
@@ -15,7 +16,7 @@ type Workload = {
   orders: (PackOrder & { marketplaceStatus?: string })[];
 };
 const filters = [["all", "All orders"], ["today", "Today"], ["upcoming", "Tomorrow / Upcoming"], ["unpacked", "Unpacked"], ["packed", "Packed"], ["waiting", "Waiting for Pickup"], ["overdue", "Missed / Overdue"]] as const;
-const orderDateFormatter = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const orderDateFormatter = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
 
 export function WorkerWorkload({ viewer, realtime }: { viewer: Viewer; realtime: boolean }) {
   const [filter, setFilter] = useState("all");
@@ -75,17 +76,17 @@ export function WorkerWorkload({ viewer, realtime }: { viewer: Viewer; realtime:
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-bold">Order status</h1><p className="text-sm text-muted-foreground">{viewer.displayName} · Ship dates in India time</p></div><div className="flex gap-2"><Button asChild><Link href="/pack"><ScanLine />Scan AWB</Link></Button>{viewer.role !== "worker" ? <Button asChild variant="outline"><Link href="/admin">Admin</Link></Button> : null}</div></header>
     {error ? <div role="alert" className="rounded-xl border border-destructive p-3 text-destructive">{error} {data ? "Showing the last loaded figures." : ""}<Button variant="outline" className="ml-3" onClick={() => void refresh()}>Retry</Button></div> : null}
     <section aria-label="Packing workload" className="grid grid-cols-2 gap-3 lg:grid-cols-6">{cards.map(([label, value, target]) => <button key={label} onClick={() => select(target)} className={`rounded-xl border p-4 text-left ${target === "overdue" && value > 0 ? "border-red-500 bg-red-50 text-red-950 dark:bg-red-950 dark:text-red-50" : "bg-card"}`}><span className="block text-sm font-medium">{label}</span><span className="mono-data mt-2 block text-3xl font-bold">{value.toLocaleString()}</span></button>)}</section>
-    <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">Live workload · Urgent orders first · Checking never marks an order packed</p><SyncNowButton endpoint="/api/workload/sync" label="Sync Orders" onSynced={refresh} /></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">Live workload · Urgent orders first · Checking never marks an order packed</p><div className="flex flex-wrap gap-2"><Button asChild variant="outline"><Link href="/ship-today">Ship Today / Batch packing</Link></Button><Button asChild variant="outline"><Link href="/labels">Print labels</Link></Button><SyncNowButton endpoint="/api/workload/sync" label="Sync Orders" onSynced={refresh} /></div></div>
     <nav aria-label="Filter orders" className="flex flex-wrap gap-2">{filters.map(([value, label]) => <Button key={value} variant={filter === value ? "default" : "outline"} aria-pressed={filter === value} onClick={() => select(value)}>{label}</Button>)}</nav>
     <div aria-live="polite" className="text-sm text-muted-foreground">{loading ? "Loading orders…" : `${data?.total.toLocaleString() ?? 0} orders · Page ${page} of ${Math.max(1, Math.ceil((data?.total ?? 0) / (data?.pageSize ?? 50)))}`}</div>
     <section aria-label="Order list" aria-busy={loading} className="space-y-3">
       {!loading && !data?.orders.length ? <p className="rounded-xl border p-8 text-center">No orders in this filter.</p> : null}
       {data?.orders.map((order) => {
-        const overdue = Boolean(order.shipByDate && order.shipByDate < data.date && !order.handedOver);
+        const overdue = Boolean(order.shipByDate && order.shipByDate < data.date && !order.handedOver && order.state !== 'cancelled');
         const packed = order.state === "packed";
         const date = order.shipByDate ? orderDateFormatter.format(new Date(`${order.shipByDate}T12:00:00+05:30`)) : null;
         return <article key={order.id} className={`rounded-xl border bg-card p-4 ${overdue ? "border-l-4 border-red-500" : ""}`}>
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="mono-data font-semibold">{order.marketplaceOrderId}</p><p className={`mt-1 text-sm font-bold ${overdue ? "text-red-600 dark:text-red-400" : ""}`}>{overdue ? <><AlertTriangle className="mr-1 inline size-4" />OVERDUE — Was due {date}</> : date ? `Going: ${order.shipByDate === data.date ? "Today" : date}` : "Going: Missing date"}</p></div><span className={`rounded-full px-3 py-1 text-sm font-semibold ${packed ? "bg-primary/15 text-primary" : "bg-muted"}`}>{packed ? "Packed" : "Unpacked"}{order.handedOver ? " · Shipped / Picked up" : packed ? " · Waiting for pickup" : ""}</span></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="mono-data font-semibold">{order.marketplaceOrderId}</p><p className={`mt-1 text-sm font-bold ${overdue ? "text-red-600 dark:text-red-400" : ""}`}>{overdue ? <><AlertTriangle className="mr-1 inline size-4" />OVERDUE — Was due {date}</> : date ? `Going: ${order.shipByDate === data.date ? "Today" : date}` : "Going: Missing date"}</p></div><span className={`rounded-full px-3 py-1 text-sm font-semibold ${packed ? "bg-primary/15 text-primary" : "bg-muted"}`}>{packed ? "Packed" : "Unpacked"}{order.handedOver ? ` · ${shippingStatus(order)}` : packed ? " · Waiting for pickup" : ""}</span></div>
           <ul className="my-3 space-y-1">{order.items.map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.title}</span><strong className="shrink-0">Qty {item.quantity}</strong></li>)}</ul>
           <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-muted-foreground">{order.packing ? `Packed by ${order.packing.workerDisplayName} · ${formatDateTime(order.packing.packedAt)}` : "Not packed yet"}{order.marketplaceStatus ? ` · ${order.marketplaceStatus.replaceAll("_", " ")}` : ""}</p><Button asChild variant="outline"><Link href={`/pack?awb=${encodeURIComponent(order.awb ?? order.marketplaceOrderId)}`}>Checking / Open order</Link></Button></div>
         </article>;

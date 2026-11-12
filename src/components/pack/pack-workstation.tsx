@@ -26,10 +26,14 @@ type Mode = "idle" | "loading" | "ready" | "packing" | "success" | "error";
 export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewer; initialOrder?: PackOrder | null }) {
   const awbInputRef = useRef<HTMLInputElement>(null);
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const actionRef = useRef(false);
+  const lookupAbort = useRef<AbortController | null>(null);
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<PackOrder | null>(initialOrder);
   const [mode, setMode] = useState<Mode>(initialOrder ? "ready" : "idle");
   const [message, setMessage] = useState("AWB search ready");
+  const [continuous, setContinuous] = useState(false);
+  const [autoOpenRequest, setAutoOpenRequest] = useState(0);
   const soundEnabled = useSoundPreference();
 
   const focusAwbInput = useCallback(() => {
@@ -40,10 +44,12 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
     focusAwbInput();
     return () => {
       if (successTimer.current) clearTimeout(successTimer.current);
+      lookupAbort.current?.abort();
     };
   }, [focusAwbInput]);
 
   const clearOrder = useCallback(() => {
+    if (actionRef.current) return;
     if (successTimer.current) clearTimeout(successTimer.current);
     setOrder(null);
     setQuery("");
@@ -52,9 +58,9 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
     focusAwbInput();
   }, [focusAwbInput]);
 
-  const lookup = useCallback(async (rawQuery: string) => {
+  const lookup = useCallback(async (rawQuery: string, identifierOnly = false) => {
     const awb = normalizeAwbLookup(rawQuery);
-    if (!awb || mode === "loading" || mode === "packing") return;
+    if (!awb || actionRef.current) return;
     if (successTimer.current) { clearTimeout(successTimer.current); successTimer.current = null; }
     if (!navigator.onLine) {
       setMode("error");
@@ -64,29 +70,34 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
       return;
     }
 
+    actionRef.current = true;
+    const controller = new AbortController(); lookupAbort.current = controller;
+    const timeout = setTimeout(() => controller.abort(), 15000);
     setMode("loading");
+    setOrder(null);
     setMessage(`Looking up AWB ${awb}`);
     try {
-      const response = await fetch(`/api/orders/lookup?q=${encodeURIComponent(awb)}`, { cache: "no-store" });
+      const response = await fetch('/api/orders/scan-lookup', { method:'POST', headers:{'Content-Type':'application/json'},body:JSON.stringify({query:awb,exact:identifierOnly}),cache: "no-store", signal: controller.signal });
       const payload: { order?: PackOrder; error?: string } = await response.json();
       if (!response.ok || !payload.order) throw new Error(payload.error ?? "Order not found.");
-      setOrder(payload.order);
       setQuery("");
-      setMode("ready");
       setMessage(payload.order.state === "packed" ? "Order is already packed" : "Product ready");
+      setOrder(payload.order);
+      setMode("ready");
     } catch (error) {
       setOrder(null);
       setMode("error");
-      setMessage(error instanceof Error ? error.message : "Order lookup failed.");
+      setMessage(controller.signal.aborted ? "Order lookup timed out. Check connection and retry." : error instanceof Error ? error.message : "Order lookup failed.");
       if (soundEnabled) playErrorTone();
       void vibrateError();
     } finally {
+      clearTimeout(timeout); actionRef.current = false;
       focusAwbInput();
     }
-  }, [focusAwbInput, mode, soundEnabled]);
+  }, [focusAwbInput, soundEnabled]);
 
   const markPacked = useCallback(async () => {
-    if (!order || order.state !== "pending" || mode === "packing") return;
+    if (!order || order.state !== "pending" || order.handedOver || actionRef.current) return;
     if (!navigator.onLine) {
       setMode("error");
       setMessage("Connection lost. Nothing was marked packed.");
@@ -94,14 +105,18 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
       void vibrateError();
       return;
     }
+    actionRef.current = true;
     setMode("packing");
     setMessage("Registering packing action");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
     try {
       const deviceId = getDeviceId();
       const response = await fetch(`/api/orders/${encodeURIComponent(order.id)}/pack`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deviceId, userAgent: navigator.userAgent }),
+        signal: controller.signal,
       });
       const payload: { order?: PackOrder; alreadyPacked?: boolean; error?: string } = await response.json();
       if (!response.ok || !payload.order) throw new Error(payload.error ?? "Packing could not be confirmed.");
@@ -110,16 +125,19 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
       setMessage(payload.alreadyPacked ? "Already packed" : `Packed by ${payload.order.packing?.workerDisplayName ?? viewer.displayName}`);
       if (soundEnabled && !payload.alreadyPacked) playSuccessTone();
       if (!payload.alreadyPacked) void vibratePackingSuccess();
-      successTimer.current = setTimeout(clearOrder, 850);
+      successTimer.current = setTimeout(() => {
+        clearOrder();
+        if (continuous) setAutoOpenRequest(value => value + 1);
+      }, continuous ? 350 : 850);
     } catch (error) {
       setMode("error");
-      setMessage(error instanceof Error ? error.message : "Packing failed. Nothing was changed.");
+      setMessage(controller.signal.aborted ? "Packing response timed out. Look up this order again to check its saved status before retrying." : error instanceof Error ? error.message : "Packing was not confirmed. Check the order status before retrying.");
       toast.error("Packing was not confirmed");
       if (soundEnabled) playErrorTone();
       void vibrateError();
       focusAwbInput();
-    }
-  }, [clearOrder, focusAwbInput, mode, order, soundEnabled, viewer.displayName]);
+    } finally { clearTimeout(timeout); actionRef.current = false; }
+  }, [clearOrder, continuous, focusAwbInput, order, soundEnabled, viewer.displayName]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -133,7 +151,7 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
   }, [clearOrder]);
 
   const busy = mode === "loading" || mode === "packing";
-  const confirmMode = !query.trim() && order?.state === "pending";
+  const confirmMode = !query.trim() && order?.state === "pending" && !order.handedOver;
   const totalPieces = order?.items.reduce((total, item) => total + item.quantity, 0) ?? 0;
 
   return (
@@ -159,9 +177,10 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
             <Input ref={awbInputRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} inputMode="text" aria-label="Enter AWB number" placeholder="Enter the printed AWB number" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
             {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusAwbInput(); }} aria-label="Clear AWB input"><X /></Button> : null}
           </div>
-          <MobileCameraScanner disabled={busy} soundEnabled={soundEnabled} onAwb={(value) => void lookup(value)} />
-          <Button type="submit" className="h-12 w-full px-4 sm:w-auto sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending"))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : confirmMode ? <PackageCheck /> : <Search />}<span>{confirmMode ? "Packed" : "Find AWB"}</span></Button>
+          <MobileCameraScanner disabled={busy} soundEnabled={soundEnabled} autoOpenRequest={autoOpenRequest} onAwb={(value) => void lookup(value,true)} />
+          <Button type="submit" className="h-12 w-full px-4 sm:w-auto sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending" || order.handedOver))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : confirmMode ? <PackageCheck /> : <Search />}<span>{confirmMode ? "Packed" : "Find AWB"}</span></Button>
         </form>
+        <label className="mx-auto mt-2 flex max-w-5xl items-center gap-2 text-sm"><input type="checkbox" checked={continuous} onChange={event => setContinuous(event.target.checked)} className="size-4"/>Automatically open camera after packing</label>
       </section>
 
       <section className="flex min-h-0 flex-1 p-4 sm:p-6">
@@ -173,6 +192,7 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
           </div>
         ) : order && order.items.length > 0 ? (
           <div className="mx-auto w-full max-w-6xl space-y-7">
+            {mode === 'error' ? <p role="alert" className="rounded-xl border border-destructive p-4 font-semibold text-destructive">{message}</p> : null}
             <div className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-xl border px-4 py-3 text-center font-black tracking-[0.1em] ${order.items.length > 1 || totalPieces > 1 ? "border-amber-500/45 bg-amber-500/10 text-amber-800 dark:text-amber-200" : "bg-card text-foreground"}`} role="status" aria-label={`${order.items.length} products, ${totalPieces} total pieces`}>
               <span>{order.items.length} {order.items.length === 1 ? "PRODUCT" : "PRODUCTS"}</span><span aria-hidden="true">•</span><span>{totalPieces} TOTAL {totalPieces === 1 ? "PIECE" : "PIECES"}</span>
             </div>
@@ -192,7 +212,7 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
                   </div>
                 ) : null}
                 <div className="pt-7">
-                  <Button aria-label={order.state === "packed" ? "Order already packed" : order.state === "cancelled" ? "Cancelled order cannot be packed" : "Mark order packed"} className="h-16 w-full text-xl font-black tracking-[0.12em]" onClick={() => void markPacked()} disabled={busy || order.state !== "pending"}>{mode === "packing" ? <Loader2 className="size-6 animate-spin" /> : order.state === "packed" ? <CheckCircle2 className="size-6" /> : <PackageCheck className="size-6" />}{order.state === "cancelled" ? "CANCELLED" : "PACKED"}</Button>
+                  <Button aria-label={order.handedOver ? "Order already dispatched" : order.state === "packed" ? "Order already packed" : order.state === "cancelled" ? "Cancelled order cannot be packed" : "Mark order packed"} className="h-16 w-full text-xl font-black tracking-[0.12em]" onClick={() => void markPacked()} disabled={busy || order.state !== "pending" || order.handedOver}>{mode === "packing" ? <Loader2 className="size-6 animate-spin" /> : order.state === "packed" ? <CheckCircle2 className="size-6" /> : <PackageCheck className="size-6" />}{order.state === "cancelled" ? "CANCELLED" : order.handedOver ? "DISPATCHED" : "PACKED"}</Button>
                   <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground"><span>Enter to confirm</span><Button variant="ghost" size="sm" onClick={clearOrder}><RotateCcw />Clear · Esc</Button></div>
                 </div>
               </CardContent>
@@ -245,9 +265,11 @@ function Info({ label, value, mono }: { label: string; value: string; mono?: boo
 
 function getDeviceId() {
   const key = "reyo-pack-device-id";
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
   const generated = crypto.randomUUID();
-  localStorage.setItem(key, generated);
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    localStorage.setItem(key, generated);
+  } catch { /* Session attribution remains server-side if browser storage is unavailable. */ }
   return generated;
 }

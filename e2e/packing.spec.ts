@@ -110,7 +110,8 @@ test("a lost connection never reports a local packing success", async ({ page, c
   await expect(page.getByRole("heading", { name: "Spider-Man Poster" })).toBeVisible();
   await context.setOffline(true);
   await page.getByRole("button", { name: "Mark order packed" }).click();
-  await expect(page.getByText("CONNECTION LOST")).toBeVisible();
+  await expect(page.getByText("CONNECTION LOST", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Connection lost. Nothing was marked packed." })).toBeVisible();
   await expect(page.getByRole("heading", { name: "PACKED" })).toHaveCount(0);
   await context.setOffline(false);
 });
