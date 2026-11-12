@@ -12,7 +12,7 @@ Reyo Pack is Reyo Store's internal, AWB-first warehouse packing application. Wor
 
 ## Local setup
 
-1. Install Node.js 22 or newer, Docker Desktop, and dependencies with `npm install`.
+1. Install Node.js 22.13 or newer, Docker Desktop, and dependencies with `npm install`.
 2. Copy `.env.example` to `.env.local` and enter the local Supabase values.
 3. Run `npx supabase start`, then `npx supabase db reset`.
 4. Create the first super admin with `npm run admin:create -- admin@example.com a-strong-password "Admin Name"`.
@@ -46,6 +46,7 @@ For a signed release, copy `android/keystore.properties.example` to `android/key
 - [Testing](./TESTING.md)
 - [Admin guide](./ADMIN_GUIDE.md)
 - [Worker guide](./WORKER_GUIDE.md)
+- [Ship Today, scanning and PDF label printing](./SHIPPING_WORKFLOW.md)
 
 The application is for private operational use. Do not expose it to public indexing or enable open sign-up.
 "# Reyopack-v2" 

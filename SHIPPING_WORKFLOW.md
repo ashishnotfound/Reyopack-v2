@@ -1,0 +1,37 @@
+# Shipping and label printing
+
+Open **Orders → Ship Today / Batch packing** or `/ship-today`. The queue uses Amazon's saved `ship_by_date` in Asia/Kolkata, not import time or the phone's timezone. It separates overdue, today, upcoming, unscanned, waiting, dispatched, cancelled and exception views. Fifty rows are rendered per page; counts and Select All Eligible use the entire database result.
+
+Select All Eligible covers pending orders due today with an AWB and product items, across every page. Start Batch Packing saves membership in Postgres. A batch's shareable URL can be used on another authenticated device. Existing atomic packing events remain the source of packing attribution; scanning records a separate idempotent first-scan timestamp. Checking by link does not write a scan. Physical carrier handover requires explicit confirmation and only accepts packed, non-cancelled orders. It never sends an Amazon shipment confirmation. Amazon shipment confirmation has not been added because this app has no authorized shipment-confirmation integration.
+
+## Label printer
+
+At `/labels`, choose source layout before uploading an unencrypted Amazon PDF. Use one-page source for original labels/invoices, or 2×2 source to split an already arranged sheet. The parser excludes identifiable separate invoice pages and retains uncertain pages for review. A shipping label's own invoice table is kept. Image-only regions are rendered locally for barcode analysis; output embeds the original PDF content without screenshot conversion. No PDF or customer details are uploaded. Only order IDs/AWBs are checked against authenticated order data.
+
+The measured reference sheet is 595 × 842 points. Four-up cells are 297.5 × 421 points, top-left, top-right, bottom-left, bottom-right, with no added gutter. Existing source margins remain inside the cells. Scaling is proportional, source rotation is honored, and 1-up uses the same full A4 sheet. Print at Actual Size / 100%. One shipping label is distinct from product quantity and artwork quantity: the printer never expands labels according to item quantities or tries to generate poster artwork.
+
+Generated sheets have an inline canvas preview on both mobile and desktop. Android APK 1.1 adds Filesystem and Share plugins so the PDF can be saved/shared through the Android chooser from private cache. Older APKs show an update message for this action. The native handoff is covered by mocked tests and a successful APK build, but has not been verified on a physical phone. No additional storage permission is requested for the private-cache path.
+
+Duplicate detection requires both a readable Order ID and AWB. An Order ID alone cannot identify a duplicate because of split packages. A repeated/ambiguous AWB is flagged for review. Known cancelled/dispatched labels are excluded; status is rechecked at generation. Uncertain/duplicate regions require explicit review confirmation before output. When printing an order selection, missing label associations are reported. Source PDFs and selections are device-local, while orders, scans, batch membership and handovers are shared in Supabase. Re-upload the source PDF when moving to another device. PDFs over 50 MB must be split to bound device memory; this does not cap the order list or batch membership.
+
+## Validation and limits
+
+- Supplied finished 20-page reference: reconstructed from 80 quadrants and compared with PyMuPDF at 144 DPI. All 20 pages matched pixel-for-pixel (zero differing channels). Customer source/output stayed outside the repository.
+- The matching 160-page original source was tested privately. The current parser recognized 74 label regions, excluded 81 separate invoice pages, and retained five uncertain pages requiring human review. This is an observed extraction result, not a claim that every arbitrary Amazon PDF is recognized. Textless, damaged, rotated or unusual labels may need review. No uncertain page is silently dropped.
+- Synthetic regression fixtures cover invoice removal, repeated labels, image-only barcode analysis, multi-page output, both layouts, source quadrant extraction, proportional placement and deterministic output. Browser tests decode real synthetic Code 128 video frames and verify one lookup per opening, deliberate repeated scans and automatic reopening after packing.
+- Camera startup uses relaxed fallback constraints, a timeout, rear-lens selection after permission, optional continuous focus/torch, explicit camera switching, late-stream cleanup, and pause/retry after backgrounding. ZXing is retained; native BarcodeDetector replacement and real-device latency benchmarks are not claimed. No Galaxy A55, Samsung Internet or physical printer was available for hardware validation.
+- Lookup and first-scan recording now use one authenticated POST instead of two phone-to-server HTTP requests. Identifiers are carried in the request body. Decoder retries run at 100 ms rather than 35 ms to avoid saturated frame decoding; this is a configured interval, not a measured hardware speed claim.
+- Offline status writes are intentionally blocked. Failed/timed-out packing requests must be checked again; retries are idempotent. No unverified local success is reported.
+- The dependency audit identified vulnerable Next.js/Zod versions; Next.js and matching lint tooling were upgraded to 16.4.6 and Zod to 4.6.7. Development-only shadcn tooling is now a devDependency and source-map-js was patched within its compatible range. `npm audit --omit=dev` reported zero known vulnerabilities. Development-tooling advisories remain; breaking forced upgrades were not applied.
+
+## Database rollout and tests
+
+Apply `supabase/migrations/20261112135146_shipping_workflow.sql` through normal Supabase migration deployment before using the real shipping queue. It adds scan/handover metadata, RLS-protected batch tables, authenticated RPCs, ambiguous-AWB protection and a guard against newly packing dispatched orders. It does not rewrite shipment promises or mark existing orders shipped.
+
+This migration was applied to the configured project on 12 November 2026 after the dry run showed it was the only pending migration. All 86 database assertions passed after deployment. The Supabase account could not run hosted security advisors (403); authenticated/anonymous permissions and RLS were checked by the regression suite instead.
+
+`node scripts/test-database.mjs --pending-shipping` validates the pending migration plus all database regressions inside rolled-back transactions. After deploying it, use `npm run test:db`. Run `npm run verify` and `npm run test:e2e` for web/mobile regressions. `scripts/verify-label-reference.mjs reference.pdf output.pdf` is an optional local diagnostic; never commit customer inputs or generated customer PDFs.
+
+The final local verification passed type checking, ESLint, 43 unit tests, all 30 desktop/mobile browser tests against the production build, and an optimized production build. The debug Android 1.1 APK was built with the PDF sharing plugins; it continues to load the configured hosted production URL. Local web changes do not update that hosted site until separately deployed. Customer PDFs are not permanent fixtures.
+
+For rollback, revert the web/native changes and retain the additive database tables and scan/handover history. Do not drop operational records to roll back a UI release. No GitHub push or production web deployment was performed for this change.
