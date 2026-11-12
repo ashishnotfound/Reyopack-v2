@@ -13,7 +13,7 @@ const config: CapacitorConfig = {
   webDir: "mobile-shell",
   backgroundColor: "#07150f",
   loggingBehavior: "debug",
-  appendUserAgent: " ReyoPackAndroid/1.0",
+  appendUserAgent: " ReyoPackAndroid/1.1",
   android: {
     allowMixedContent: false,
     backgroundColor: "#07150f",
