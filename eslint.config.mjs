@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     "build/**",
     "android/**",
     "artifacts/**",
+    "public/pdf.worker.min.mjs",
     "next-env.d.ts",
   ]),
 ]);

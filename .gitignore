@@ -22,6 +22,9 @@
 
 # production
 /build
+/public/pdf.worker.min.mjs
+/tmp/
+/output/
 
 # Android / Capacitor build output and private signing material
 /android/.gradle/
