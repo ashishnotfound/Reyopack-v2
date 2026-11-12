@@ -16,8 +16,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Enter a valid AWB number." }, { status: 400 });
   }
 
-  const result = await lookupOrder(normalizeAwbLookup(parsed.data.query));
-  if (result.error) return NextResponse.json({ error: result.error }, { status: 500 });
+  const result = await lookupOrder(normalizeAwbLookup(parsed.data.query), url.searchParams.get("exact") === "1");
+  if (result.error) return NextResponse.json({ error: result.error }, { status: result.error.includes("Multiple orders") ? 409 : 503 });
   if (!result.data) return NextResponse.json({ error: "AWB not found." }, { status: 404 });
 
   return NextResponse.json({ order: result.data }, { headers: { "Cache-Control": "no-store" } });

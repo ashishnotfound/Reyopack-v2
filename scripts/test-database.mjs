@@ -53,7 +53,15 @@ try {
 
   for (const testFile of testFiles) {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- testFile is returned by readdir on the fixed tests directory and filtered to .sql.
-    const sql = await readFile(join(testsDirectory, testFile), "utf8");
+    let sql = await readFile(join(testsDirectory, testFile), "utf8");
+    // Validate pending shipping DDL in the same rolled-back transaction as each fixture.
+    if (process.argv.includes("--pending-shipping")) {
+      const migration = await readFile(join(process.cwd(), "supabase/migrations/20261112135146_shipping_workflow.sql"), "utf8");
+      sql = sql.replace(/^begin;/i, () => `begin;\n${migration}\n`);
+    } else if (testFile === "004_shipping_workflow.sql") {
+      const installed = await client.query("select to_regprocedure('public.shipping_queue(text,integer,uuid)') is not null as ready");
+      if (!installed.rows[0].ready) { console.log("Shipping migration is pending; validate it with --pending-shipping."); continue; }
+    }
     const queryResult = await client.query(sql);
     const results = Array.isArray(queryResult) ? queryResult : [queryResult];
     const tapLines = results.flatMap((result) =>

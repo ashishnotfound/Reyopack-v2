@@ -24,14 +24,14 @@ import type {
 
 type Result<T> = { data: T; error: string | null };
 
-export async function lookupOrder(query: string): Promise<Result<PackOrder | null>> {
+export async function lookupOrder(query: string, identifierOnly = false): Promise<Result<PackOrder | null>> {
   if (isDemoMode()) return { data: getDemoOrder(query), error: null };
   if (!hasSupabaseConfig()) {
     return { data: null, error: "Supabase is not configured." };
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("lookup_order", { p_query: query });
+  const { data, error } = await supabase.rpc(identifierOnly ? "lookup_shipping_identifier" : "lookup_order", { p_query: query });
   return {
     data: normalizeArtworkOrder((data as PackOrder | null) ?? null),
     error: error?.message ?? null,
