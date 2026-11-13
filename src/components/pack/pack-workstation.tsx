@@ -33,6 +33,7 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
   const [mode, setMode] = useState<Mode>(initialOrder ? "ready" : "idle");
   const [message, setMessage] = useState("AWB search ready");
   const [continuous, setContinuous] = useState(false);
+  const [continuousLabels, setContinuousLabels] = useState(false);
   const [autoOpenRequest, setAutoOpenRequest] = useState(0);
   const soundEnabled = useSoundPreference();
 
@@ -60,14 +61,14 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
 
   const lookup = useCallback(async (rawQuery: string, identifierOnly = false) => {
     const awb = normalizeAwbLookup(rawQuery);
-    if (!awb || actionRef.current) return;
+    if (!awb || actionRef.current) return { ok: false, message: "Another action is still in progress. Try this label again." };
     if (successTimer.current) { clearTimeout(successTimer.current); successTimer.current = null; }
     if (!navigator.onLine) {
       setMode("error");
       setMessage("Connection lost. Reconnect before searching.");
       if (soundEnabled) playErrorTone();
       void vibrateError();
-      return;
+      return { ok: false, message: "Connection lost. Reconnect, then retry this label or scan another." };
     }
 
     actionRef.current = true;
@@ -75,7 +76,7 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
     const timeout = setTimeout(() => controller.abort(), 15000);
     setMode("loading");
     setOrder(null);
-    setMessage(`Looking up AWB ${awb}`);
+    setMessage("Looking up scanned order");
     try {
       const response = await fetch('/api/orders/scan-lookup', { method:'POST', headers:{'Content-Type':'application/json'},body:JSON.stringify({query:awb,exact:identifierOnly}),cache: "no-store", signal: controller.signal });
       const payload: { order?: PackOrder; error?: string } = await response.json();
@@ -84,15 +85,18 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
       setMessage(payload.order.state === "packed" ? "Order is already packed" : "Product ready");
       setOrder(payload.order);
       setMode("ready");
+      return { ok: true, message: `Order loaded · ${payload.order.items.length} products · ${payload.order.items.reduce((sum, item) => sum + item.quantity, 0)} pieces. View order to pack.` };
     } catch (error) {
       setOrder(null);
       setMode("error");
       setMessage(controller.signal.aborted ? "Order lookup timed out. Check connection and retry." : error instanceof Error ? error.message : "Order lookup failed.");
       if (soundEnabled) playErrorTone();
       void vibrateError();
+      return { ok: false, message: controller.signal.aborted ? "Lookup timed out. Retry this label or scan another." : "Order lookup failed. Retry this label or scan another." };
     } finally {
       clearTimeout(timeout); actionRef.current = false;
-      focusAwbInput();
+      // Do not summon the phone keyboard behind a still-open continuous scanner.
+      if (!document.querySelector('[role="dialog"]')) focusAwbInput();
     }
   }, [focusAwbInput, soundEnabled]);
 
@@ -177,10 +181,11 @@ export function PackWorkstation({ viewer, initialOrder = null }: { viewer: Viewe
             <Input ref={awbInputRef} value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} inputMode="text" aria-label="Enter AWB number" placeholder="Enter the printed AWB number" className="h-12 pl-11 pr-10 text-base font-medium shadow-sm" disabled={busy} />
             {query ? <Button type="button" variant="ghost" size="icon-sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => { setQuery(""); focusAwbInput(); }} aria-label="Clear AWB input"><X /></Button> : null}
           </div>
-          <MobileCameraScanner disabled={busy} soundEnabled={soundEnabled} autoOpenRequest={autoOpenRequest} onAwb={(value) => void lookup(value,true)} />
+          <MobileCameraScanner disabled={busy} soundEnabled={soundEnabled} continuousScan={continuousLabels} onContinuousChange={setContinuousLabels} autoOpenRequest={autoOpenRequest} onAwb={(value) => lookup(value,true)} />
           <Button type="submit" className="h-12 w-full px-4 sm:w-auto sm:px-6" disabled={busy || (!query.trim() && (!order || order.state !== "pending" || order.handedOver))}>{mode === "loading" ? <Loader2 className="animate-spin" /> : confirmMode ? <PackageCheck /> : <Search />}<span>{confirmMode ? "Packed" : "Find AWB"}</span></Button>
         </form>
         <label className="mx-auto mt-2 flex max-w-5xl items-center gap-2 text-sm"><input type="checkbox" checked={continuous} onChange={event => setContinuous(event.target.checked)} className="size-4"/>Automatically open camera after packing</label>
+        <label className="mx-auto mt-2 flex max-w-5xl items-center gap-2 text-sm"><input type="checkbox" aria-label="Continuous label scanning" checked={continuousLabels} onChange={event => setContinuousLabels(event.target.checked)} className="size-4"/>Continuous label scanning — keep camera running; never auto-pack</label>
       </section>
 
       <section className="flex min-h-0 flex-1 p-4 sm:p-6">

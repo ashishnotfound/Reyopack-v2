@@ -1,265 +1,300 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, CameraOff, Loader2, ScanLine } from "lucide-react";
+import { Camera, CameraOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { isLikelyAwb, normalizeAwbLookup } from "@/lib/awb";
-import { playErrorTone, playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
-import { vibrateError, vibrateScanDetected } from "@/lib/native-feedback";
+import { playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
+import { vibrateScanDetected } from "@/lib/native-feedback";
 import { acquireCamera, cameraErrorMessage, rankCameras } from "@/lib/scanner-camera";
-import { applyCameraConstraint, cameraCapabilities, cameraSnapshot, tuneCamera } from "@/lib/scanner-quality";
+import { applyCameraConstraint, cameraCapabilities, cameraSnapshot, refocusCamera, tuneCamera } from "@/lib/scanner-quality";
+import { playCameraPreview } from "@/lib/scanner-preview";
+import { ScanGate } from "@/lib/scanner-gate";
 import { ScannerDiagnosticPanel, type ScannerDiagnostics } from "@/components/pack/scanner-diagnostics";
+import type { CameraBarcodeReader } from "@/lib/scanner-reader";
 import type { IScannerControls } from "@zxing/browser";
 
-type ScannerState = "idle" | "starting" | "active" | "error";
+type Phase = "idle" | "starting" | "active" | "paused" | "error";
+type LookupResult = { ok: boolean; message: string };
 
-export function MobileCameraScanner({
-  disabled,
-  onAwb,
-  soundEnabled,
-  autoOpenRequest = 0,
-}: {
-  disabled: boolean;
-  onAwb: (value: string) => void;
-  soundEnabled: boolean;
-  autoOpenRequest?: number;
+export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenRequest = 0, continuousScan = false, onContinuousChange }: {
+  disabled: boolean; onAwb: (value: string) => Promise<LookupResult> | void;
+  soundEnabled: boolean; autoOpenRequest?: number;
+  continuousScan?: boolean; onContinuousChange?: (enabled: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const controlsRef = useRef<IScannerControls | null>(null);
-  const sessionRef = useRef(0);
-  const acquisitionRef = useRef<AbortController | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const resultHandledRef = useRef(false);
+  const controlsRef = useRef<IScannerControls | null>(null);
+  const readerRef = useRef<typeof CameraBarcodeReader | null>(null);
+  const sessionRef = useRef(0);
+  const decoderEpoch = useRef(0);
+  const acquisitionRef = useRef<AbortController | null>(null);
+  const selectedLens = useRef("");
+  const gateRef = useRef(new ScanGate());
+  const singleFinished = useRef(false);
+  const openRef = useRef(false);
+  const phaseRef = useRef<Phase>("idle");
+  const continuousRef = useRef(false);
+  const onAwbRef = useRef(onAwb);
+  const statsRef = useRef<ScannerDiagnostics | null>(null);
+  const recoveries = useRef<number[]>([]);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startRef = useRef<(device?: string, recovery?: boolean) => Promise<void>>(async () => {});
+  const decoderRef = useRef<() => void>(() => {});
+  const focusTried = useRef(false);
+  const focusBusy = useRef(false);
   const [open, setOpen] = useState(false);
-  const [scannerState, setScannerState] = useState<ScannerState>("idle");
-  const [errorMessage, setErrorMessage] = useState("");
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [cameraId, setCameraId] = useState("");
-  const [torchAvailable, setTorchAvailable] = useState(false);
   const [torch, setTorch] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<ScannerDiagnostics | null>(null);
   const [refocusing, setRefocusing] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<ScannerDiagnostics | null>(null);
 
-  const stopCamera = useCallback(() => {
-    sessionRef.current += 1;
-    acquisitionRef.current?.abort();
-    acquisitionRef.current = null;
-    // ZXing may return an async torch-off operation after it stops the track.
-    // Closing a stream must not create an unhandled rejection if that fails.
-    try { void Promise.resolve(controlsRef.current?.stop()).catch(() => undefined); } catch { /* Track cleanup below still runs. */ }
-    controlsRef.current = null;
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    const stream = videoRef.current?.srcObject;
-    if (stream && typeof (stream as MediaStream).getTracks === "function") {
-      (stream as MediaStream).getTracks().forEach((track) => track.stop());
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
+  useEffect(() => { onAwbRef.current = onAwb; }, [onAwb]);
+  useEffect(() => { continuousRef.current = continuousScan; }, [continuousScan]);
+  const transition = useCallback((value: Phase) => { phaseRef.current = value; setPhase(value); }, []);
+  const stopDecoder = useCallback(() => {
+    decoderEpoch.current++;
+    // scan() owns only decoding; it never stops the live track or changes torch.
+    controlsRef.current?.stop(); controlsRef.current = null;
+    if (statsRef.current) statsRef.current.decoderRunning = false;
   }, []);
-
+  const stopCamera = useCallback(() => {
+    sessionRef.current++;
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+    acquisitionRef.current?.abort(); acquisitionRef.current = null;
+    stopDecoder();
+    streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, [stopDecoder]);
   useEffect(() => stopCamera, [stopCamera]);
 
-  const finishAwbScan = useCallback((rawValue: string) => {
-    const awb = normalizeAwbLookup(rawValue);
-    if (!isLikelyAwb(awb) || resultHandledRef.current) return false;
-    resultHandledRef.current = true;
+  const publish = useCallback(() => {
+    const stats = statsRef.current;
+    if (!stats) return;
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (track) stats.camera = cameraSnapshot(track);
+    stats.blocked = gateRef.current.busy ? "lookup in flight" : singleFinished.current ? "single-shot complete" : gateRef.current.reason;
+    stats.phase = phaseRef.current;
+    setDiagnostics({ ...stats, sampledAt: Date.now() });
+  }, []);
+
+  const finishScan = useCallback((raw: string) => {
+    const awb = normalizeAwbLookup(raw);
+    const stats = statsRef.current;
+    if (!isLikelyAwb(awb)) { if (stats) stats.rejected++; return; }
+    const gate = gateRef.current;
+    if (singleFinished.current || !gate.begin(awb)) { if (stats) stats.suppressed++; return; }
+    if (stats) { stats.accepted++; stats.lastDetectionAt = Date.now(); }
+    setNotice("Looking up order…");
     if (soundEnabled) playScanBeep();
     void vibrateScanDetected();
-    stopCamera();
-    setOpen(false);
-    onAwb(awb);
-    return true;
-  }, [onAwb, soundEnabled, stopCamera]);
-
-  const startCamera = useCallback(async (deviceId?: string) => {
-    if (soundEnabled) primeAudioFeedback();
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setScannerState("error");
-      setErrorMessage("Open the HTTPS app address to use live AWB scanning.");
-      return;
+    if (!continuousRef.current) {
+      singleFinished.current = true;
+      openRef.current = false; stopCamera(); setOpen(false);
     }
+    // Every completion path releases this exact gate, including rejected promises.
+    void (async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          Promise.resolve(onAwbRef.current(awb)),
+          new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Lookup timed out")), 20000); }),
+        ]);
+        // Lookup ownership survives decoder/camera recovery, unlike the camera
+        // epoch. A deliberate new scanner opening gets a different gate.
+        if (gateRef.current === gate && result?.ok !== false && statsRef.current) statsRef.current.lastSuccessAt = Date.now();
+        if (gateRef.current === gate && openRef.current) setNotice(result?.message ?? "Order loaded. View order to pack.");
+      } catch {
+        if (gateRef.current === gate && openRef.current) setNotice("Lookup failed. Scan another label or tap Retry this label.");
+      } finally {
+        clearTimeout(timeout); gate.finish();
+        if (gateRef.current === gate && openRef.current) publish();
+      }
+    })();
+  }, [publish, soundEnabled, stopCamera]);
 
+  const scheduleRecovery = useCallback((reason: string, camera = false) => {
+    if (!openRef.current || document.visibilityState === "hidden" || retryTimer.current) return;
+    const now = Date.now();
+    recoveries.current = recoveries.current.filter(time => now - time < 60000);
+    const stats = statsRef.current;
+    if (recoveries.current.length >= 3) {
+      stopDecoder(); transition("error"); setError("Automatic recovery paused after three attempts. Choose a lens or tap Retry camera."); publish(); return;
+    }
+    recoveries.current.push(now);
+    if (stats) { stats.recoveryAttempts++; stats.recoveryReason = reason; }
+    if (camera) { stopCamera(); transition("starting"); }
+    else stopDecoder();
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = null;
+      if (!openRef.current || document.visibilityState === "hidden") return;
+      if (camera) void startRef.current(selectedLens.current, true);
+      else decoderRef.current(); // A moving, healthy video never needs a new stream here.
+    }, 300);
+    publish();
+  }, [publish, stopCamera, stopDecoder, transition]);
+
+  const startDecoder = useCallback(() => {
+    const video = videoRef.current, Reader = readerRef.current;
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!video || !Reader || !track || track.readyState === "ended" || !openRef.current) return;
+    stopDecoder();
+    const session = sessionRef.current, epoch = decoderEpoch.current;
+    const stats = statsRef.current;
+    if (!stats) return;
+    stats.decoderRunning = true; stats.lastAttemptAt = Date.now(); stats.videoAdvancedAt = Date.now(); stats.videoTime = video.currentTime;
+    const reader = new Reader(video, frame => {
+      if (session !== sessionRef.current || epoch !== decoderEpoch.current) return;
+      stats.frame = frame; stats.attempts++; stats.lastAttemptAt = Date.now();
+      if (frame.outcome === "decoded") { stats.decoded++; stats.lastDecodedAt = Date.now(); }
+      else if (frame.outcome === "not-found") stats.notFound++;
+      else if (frame.outcome === "checksum") stats.checksum++;
+      else if (frame.outcome === "format") stats.formatErrors++;
+      else stats.errors++;
+    });
+    const controls = reader.scan(video, (result, decodeError) => {
+      if (session !== sessionRef.current || epoch !== decoderEpoch.current) return;
+      if (result) finishScan(result.getText());
+      if (decodeError && stats.frame?.outcome === "error") scheduleRecovery("Decoder exception; restarting decoder only");
+    });
+    if (session !== sessionRef.current || epoch !== decoderEpoch.current) { controls.stop(); return; }
+    controlsRef.current = controls;
+    transition("active"); publish();
+  }, [finishScan, publish, scheduleRecovery, stopDecoder, transition]);
+  useEffect(() => { decoderRef.current = startDecoder; }, [startDecoder]);
+
+  const startCamera = useCallback(async (deviceId?: string, recovery = false) => {
     stopCamera();
-    resultHandledRef.current = false;
+    if (!openRef.current) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      transition("error"); setError("Open the HTTPS app address to use live AWB scanning."); return;
+    }
+    if (soundEnabled) primeAudioFeedback();
     const session = sessionRef.current;
-    const acquisition = new AbortController();
-    acquisitionRef.current = acquisition;
-    setScannerState("starting");
-    setErrorMessage("");
-    setDiagnostics(null);
-    setRefocusing(false);
-    setTorch(false); setTorchAvailable(false);
-    const startupTimeout = setTimeout(() => {
-      if (session !== sessionRef.current) return;
-      stopCamera(); setScannerState("error");
-      setErrorMessage("Camera preview did not start. Close other camera apps, choose another lens, and retry.");
-    }, 20000);
-
+    const controller = new AbortController(); acquisitionRef.current = controller;
+    transition("starting"); setError(""); setTorch(false); setRefocusing(false); focusBusy.current = false; focusTried.current = false;
+    if (!recovery) { statsRef.current = null; setDiagnostics(null); }
+    const timeout = setTimeout(() => { if (session === sessionRef.current) { stopCamera(); transition("error"); setError("Camera startup timed out. Choose another rear lens or retry."); } }, 20000);
     try {
-      const { CameraBarcodeReader } = await import("@/lib/scanner-reader");
+      const { CameraBarcodeReader: Reader } = await import("@/lib/scanner-reader"); readerRef.current = Reader;
       const video = videoRef.current;
       if (!video || session !== sessionRef.current) return;
-      const stream = await acquireCamera(navigator.mediaDevices, acquisition.signal, deviceId);
-      if (session !== sessionRef.current) { stream.getTracks().forEach((track) => track.stop()); return; }
+      const stream = await acquireCamera(navigator.mediaDevices, controller.signal, deviceId || selectedLens.current || undefined);
+      if (session !== sessionRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current = stream;
       const track = stream.getVideoTracks()[0];
-      // Optional controls must never turn a usable camera into a startup failure.
+      selectedLens.current = track.getSettings().deviceId ?? deviceId ?? "";
+      setCameraId(selectedLens.current);
+      await playCameraPreview(video, stream, controller.signal);
+      // Configure focus on a PLAYING camera, not before the sensor starts supplying frames.
       const adjustments = await tuneCamera(track);
-      const capabilities = cameraCapabilities(track);
       if (session !== sessionRef.current) return;
-      const stats: ScannerDiagnostics = { camera: cameraSnapshot(track), adjustments, attempts: 0, decoded: 0, rejected: 0, notFound: 0, checksum: 0, formatErrors: 0, errors: 0 };
-      setDiagnostics({ ...stats });
-      track.addEventListener("ended", () => {
+      statsRef.current = recovery && statsRef.current ? { ...statsRef.current, camera: cameraSnapshot(track), adjustments } : {
+        camera: cameraSnapshot(track), adjustments, attempts: 0, decoded: 0, rejected: 0, notFound: 0, checksum: 0, formatErrors: 0, errors: 0,
+        accepted: 0, suppressed: 0, decoderRunning: false, lastAttemptAt: null, lastDetectionAt: null, lastSuccessAt: null, lastDecodedAt: Date.now(),
+        videoTime: video.currentTime, videoAdvancedAt: Date.now(), recoveryAttempts: 0, focusRecoveries: 0, blocked: "none", phase: "starting", lenses: [],
+      };
+      track.addEventListener("ended", () => { if (session === sessionRef.current) scheduleRecovery("Camera track ended", true); }, { once: true });
+      void navigator.mediaDevices.enumerateDevices().then(devices => {
         if (session !== sessionRef.current) return;
-        stopCamera(); setScannerState("error"); setErrorMessage("Camera disconnected or permission changed. Retry camera to continue.");
-      }, { once: true });
-      setTorchAvailable(Boolean(capabilities?.torch));
-      setCameraId(track.getSettings().deviceId ?? "");
-      void navigator.mediaDevices.enumerateDevices().then((devices) => {
-        if (session === sessionRef.current) setCameras(rankCameras(devices));
+        const ranked = rankCameras(devices); setCameras(ranked);
+        if (statsRef.current) statsRef.current.lenses = ranked.map((camera, index) => camera.label || `Camera ${index + 1} (lens identity unreported)`);
+        publish();
       }).catch(() => undefined);
-      let lastReport = 0;
-      const reader = new CameraBarcodeReader(video, (frame) => {
-        if (session !== sessionRef.current) return;
-        stats.frame = frame; stats.attempts++;
-        if (frame.outcome === "decoded") stats.decoded++;
-        else if (frame.outcome === "not-found") stats.notFound++;
-        else if (frame.outcome === "checksum") stats.checksum++;
-        else if (frame.outcome === "format") stats.formatErrors++;
-        else stats.errors++;
-        // Diagnostics must not cause a React render on every camera frame.
-        if (performance.now() - lastReport >= 1000 || frame.outcome === "error") {
-          lastReport = performance.now(); stats.camera = cameraSnapshot(track);
-          setDiagnostics({ ...stats });
-        }
-      });
-      const controls = await reader.decodeFromStream(stream, video, (result, error) => {
-        if (session !== sessionRef.current) return;
-        if (result && !finishAwbScan(result.getText())) stats.rejected++;
-        if (error && stats.frame?.outcome === "error") {
-          stopCamera(); setScannerState("error");
-          setErrorMessage("Barcode processing stopped unexpectedly. Check scanner diagnostics and retry camera.");
-        }
-      });
-
-      if (session !== sessionRef.current) {
-        try { void Promise.resolve(controls.stop()).catch(() => undefined); } catch { /* The stale track was already stopped. */ }
-        return;
-      }
-      controlsRef.current = controls;
-      setScannerState("active");
-    } catch (error) {
+      startDecoder();
+    } catch (caught) {
       if (session !== sessionRef.current) return;
-      stopCamera();
-      setScannerState("error");
-      setErrorMessage(cameraErrorMessage(error));
-      if (soundEnabled) playErrorTone();
-      void vibrateError();
-    } finally { clearTimeout(startupTimeout); }
-  }, [finishAwbScan, soundEnabled, stopCamera]);
+      stopCamera(); transition("error"); setError(cameraErrorMessage(caught)); publish();
+    } finally { clearTimeout(timeout); }
+  }, [publish, scheduleRecovery, soundEnabled, startDecoder, stopCamera, transition]);
+  useEffect(() => { startRef.current = startCamera; }, [startCamera]);
+
+  const refocus = useCallback(async (automatic = false) => {
+    const track = streamRef.current?.getVideoTracks()[0], controller = acquisitionRef.current;
+    if (!track || !controller || focusBusy.current) return;
+    const session = sessionRef.current;
+    focusBusy.current = true; setRefocusing(true);
+    if (statsRef.current) statsRef.current.focusRecoveries++;
+    try { await refocusCamera(track, controller.signal); }
+    catch { if (session === sessionRef.current) setError("Focus control unavailable or rejected. Move farther back, improve light, or choose another exposed rear lens."); }
+    finally {
+      if (session === sessionRef.current) { focusBusy.current = false; setRefocusing(false); if (automatic && statsRef.current) statsRef.current.adjustments = [...statsRef.current.adjustments, "One automatic focus retry after repeated misses (not proof of sharpness)"].slice(-8); publish(); }
+    }
+  }, [publish]);
 
   useEffect(() => {
+    if (!open) return;
     const pause = () => {
-      if (document.visibilityState === "hidden") {
-        stopCamera();
-        setScannerState("error");
-        setErrorMessage("Camera paused while the app was in the background. Tap Retry camera to resume.");
-      }
+      if (document.visibilityState === "hidden") { stopCamera(); transition("paused"); setError("Camera paused in background; it will resume when you return."); publish(); }
+      else if (openRef.current && phaseRef.current === "paused") void startRef.current(selectedLens.current, true);
     };
     document.addEventListener("visibilitychange", pause);
-    return () => document.removeEventListener("visibilitychange", pause);
-  }, [stopCamera]);
+    const timer = setInterval(() => {
+      const stats = statsRef.current, video = videoRef.current;
+      if (!stats || !video || document.visibilityState === "hidden") return;
+      if (video.currentTime !== stats.videoTime) { stats.videoTime = video.currentTime; stats.videoAdvancedAt = Date.now(); }
+      if (phaseRef.current === "active") {
+        const now = Date.now();
+        if (stats.lastAttemptAt && now - stats.lastAttemptAt > 5000) scheduleRecovery("Decoder attempts stalled; preserving camera stream");
+        else if (now - stats.videoAdvancedAt > 7000) scheduleRecovery("Video frame clock stalled", true);
+        else if (!focusTried.current && !gateRef.current.busy && now - (stats.lastDecodedAt ?? now) > 8000) {
+          focusTried.current = true;
+          const track = streamRef.current?.getVideoTracks()[0];
+          const modes = track ? cameraCapabilities(track).focusMode : [];
+          if (modes?.some(mode => mode === "single-shot" || mode === "continuous")) void refocus(true);
+          else setError("Decoder is trying but no barcode is recognized. Improve light/distance or choose another available rear camera.");
+        }
+      }
+      publish();
+    }, 1000);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", pause); };
+  }, [open, publish, refocus, scheduleRecovery, stopCamera, transition]);
 
-  const handleOpenChange = useCallback((nextOpen: boolean) => {
-    if (!nextOpen) stopCamera();
-    resultHandledRef.current = false;
-    setScannerState("idle");
-    setErrorMessage("");
-    setOpen(nextOpen);
-  }, [stopCamera]);
-
+  const changeOpen = useCallback((value: boolean) => {
+    openRef.current = value;
+    if (!value) stopCamera();
+    else { gateRef.current = new ScanGate(); singleFinished.current = false; recoveries.current = []; setNotice(""); }
+    transition("idle"); setError(""); setOpen(value);
+  }, [stopCamera, transition]);
   useEffect(() => {
     if (autoOpenRequest > 0) {
-      // An explicit successful-packing event requests the next camera session.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      handleOpenChange(true);
+      changeOpen(true);
     }
-  }, [autoOpenRequest, handleOpenChange]);
-
+  }, [autoOpenRequest, changeOpen]);
   useEffect(() => { void import("@/lib/scanner-reader").catch(() => undefined); }, []);
 
-  const working = scannerState === "starting";
-
-  return (
-    <>
-      <Button type="button" variant="outline" className="h-12 w-full px-4" disabled={disabled} onClick={() => { if (soundEnabled) primeAudioFeedback(); handleOpenChange(true); }} aria-label="Scan AWB with camera">
-        <Camera />
-        Scan AWB
-      </Button>
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="flex max-h-[95dvh] flex-col overflow-y-auto p-0 sm:max-w-lg [&>*]:shrink-0" onOpenAutoFocus={(event) => { event.preventDefault(); void startCamera(); }}>
-          <DialogHeader className="px-5 pt-5">
-            <DialogTitle>Scan AWB barcode</DialogTitle>
-            <DialogDescription>Aim at the single long barcode above the printed AWB number. Avoid the square codes lower on the label.</DialogDescription>
-          </DialogHeader>
-
-          <div className="relative mx-4 aspect-[4/3] overflow-hidden rounded-xl bg-black">
-            <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 size-full object-contain" aria-label="Camera preview" />
-            <div className="pointer-events-none absolute inset-x-[6%] top-1/2 h-24 -translate-y-1/2 rounded-xl border-2 border-white/90 shadow-[0_0_0_999px_rgb(0_0_0/0.28)]">
-              <span className="absolute inset-x-3 top-1/2 h-0.5 -translate-y-1/2 bg-primary shadow-[0_0_14px_var(--primary)]" />
-            </div>
-            {scannerState !== "active" ? (
-              <div className="absolute inset-0 grid place-items-center bg-black/65 p-6 text-center text-white">
-                <div className="flex max-w-sm flex-col items-center">
-                  {working ? <Loader2 className="mb-3 size-9 animate-spin" /> : errorMessage ? <CameraOff className="mb-3 size-9" /> : <ScanLine className="mb-3 size-9" />}
-                  <p className="font-semibold">{working ? "Starting camera…" : errorMessage || "Ready for the AWB barcode"}</p>
-                  {!working && !errorMessage ? <p className="mt-2 text-xs text-white/70">Opening your rear camera automatically.</p> : null}
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <p className="px-5 text-xs text-muted-foreground">Keep the whole long barcode in view. Hold steady about 15–30 cm away; move back if blurry. Avoid glare and use Light on in dim rooms. Processing stays on this device.</p>
-          {scannerState === "active" && errorMessage ? <p role="alert" className="px-5 text-sm text-destructive">{errorMessage}</p> : null}
-          <div className="flex flex-wrap gap-2 px-5 pb-3">
-            {cameras.length > 1 ? <label className="text-sm">Camera<select aria-label="Camera lens" className="ml-2 max-w-56 rounded border bg-background p-2" value={cameraId} disabled={working} onChange={(event) => void startCamera(event.target.value)}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Camera ${index + 1}`}</option>)}</select></label> : null}
-            {torchAvailable && scannerState === "active" ? <Button variant="outline" aria-pressed={torch} onClick={async () => {
-              const session = sessionRef.current;
-              try { const track = streamRef.current?.getVideoTracks()[0]; if (track) { await applyCameraConstraint(track, { advanced: [{ torch: !torch } as MediaTrackConstraintSet] }); if (session === sessionRef.current) setTorch(!torch); } }
-              catch { if (session === sessionRef.current) setErrorMessage("This camera could not change the light. Try another lens."); }
-            }}>{torch ? "Light off" : "Light on"}</Button> : null}
-            {scannerState === "active" && diagnostics && /continuous|single-shot/.test(diagnostics.camera.focusModes) ? <Button variant="outline" disabled={refocusing} onClick={async () => {
-              const session = sessionRef.current;
-              const track = streamRef.current?.getVideoTracks()[0];
-              if (!track) return;
-              setRefocusing(true);
-              try {
-                const modes = cameraCapabilities(track).focusMode ?? [];
-                const mode = modes.includes("continuous") ? "continuous" : modes.includes("single-shot") ? "single-shot" : null;
-                if (!mode) throw new Error("No automatic focus control");
-                await applyCameraConstraint(track, { advanced: [{ focusMode: mode } as MediaTrackConstraintSet] });
-              } catch { if (session === sessionRef.current) setErrorMessage("Automatic focus control unavailable. Move slightly back, improve lighting, or choose another rear lens."); }
-              finally { if (session === sessionRef.current) setRefocusing(false); }
-            }}>{refocusing ? "Refocusing…" : "Refocus"}</Button> : null}
-          </div>
-          <ScannerDiagnosticPanel data={diagnostics} />
-          {errorMessage ? <DialogFooter className="mx-0 mb-0">
-            <Button type="button" onClick={() => void startCamera()} disabled={working || scannerState === "active"}>
-              {scannerState === "starting" ? <Loader2 className="animate-spin" /> : <Camera />}
-              {scannerState === "active" ? "Camera active" : "Retry camera"}
-            </Button>
-
-          </DialogFooter> : null}
-        </DialogContent>
-      </Dialog>
-    </>
-  );
+  const caps = { torch: diagnostics?.camera.torchSupported, focusMode: diagnostics?.camera.focusModes.split(", "), zoom: diagnostics?.camera.zoomRange };
+  return <>
+    <Button type="button" variant="outline" className="h-12 w-full px-4" disabled={disabled} onClick={() => { if (soundEnabled) primeAudioFeedback(); changeOpen(true); }} aria-label="Scan AWB with camera"><Camera />Scan AWB</Button>
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogContent className="flex max-h-[95dvh] flex-col overflow-y-auto p-0 sm:max-w-lg [&>*]:shrink-0" onOpenAutoFocus={event => { event.preventDefault(); void startCamera(); }}>
+        <DialogHeader className="px-5 pt-5"><DialogTitle>Scan AWB barcode</DialogTitle><DialogDescription>Aim at the single long barcode above the printed AWB number. Avoid the square codes lower on the label. Continuous mode keeps the camera and decoder running.</DialogDescription></DialogHeader>
+        <label className="flex items-center gap-2 px-5 text-sm"><input type="checkbox" aria-label="Keep scanner running" checked={continuousScan} onChange={event => { continuousRef.current = event.target.checked; onContinuousChange?.(event.target.checked); }} />Continuous scan — keep camera open for next label</label>
+        <div className="relative mx-4 aspect-[4/3] overflow-hidden rounded-xl bg-black">
+          <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 size-full object-contain" aria-label="Camera preview" />
+          <div className="pointer-events-none absolute inset-x-[6%] top-1/2 h-24 -translate-y-1/2 rounded-xl border-2 border-white/90" />
+          {phase !== "active" ? <div className="absolute inset-0 grid place-items-center bg-black/65 p-6 text-center text-white"><div>{phase === "starting" ? <Loader2 className="mx-auto mb-3 animate-spin" /> : <CameraOff className="mx-auto mb-3" />}<p>{phase === "starting" ? "Starting camera…" : error || "Opening camera…"}</p></div></div> : null}
+        </div>
+        <p className="px-5 text-xs text-muted-foreground">Hold the full long barcode steady, about 15–30 cm away; move back if blurry. Resolution is not focus. Avoid glare; use Light on in dim rooms. Frames stay on this device.</p>
+        {notice ? <div className="space-y-2 px-5" role="status" aria-label="Scan lookup result"><p className="text-sm font-semibold">{notice}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={disabled} onClick={() => { gateRef.current.retry(); setNotice("Ready to retry this label"); publish(); }}>Retry this label</Button><Button type="button" onClick={() => changeOpen(false)}>View order / Pack</Button></div></div> : null}
+        {error && phase === "active" ? <p role="alert" className="px-5 text-sm text-destructive">{error}</p> : null}
+        <div className="flex flex-wrap gap-2 px-5">
+          {cameras.length > 1 ? <label className="text-sm">Camera<select aria-label="Camera lens" className="ml-2 max-w-56 rounded border bg-background p-2" value={cameraId} disabled={phase === "starting"} onChange={event => { selectedLens.current = event.target.value; void startCamera(event.target.value); }}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Camera ${index + 1}`}</option>)}</select></label> : null}
+          {caps.torch && phase === "active" ? <Button type="button" variant="outline" aria-pressed={torch} onClick={async () => { const track = streamRef.current?.getVideoTracks()[0], session = sessionRef.current; if (!track) return; try { await applyCameraConstraint(track, { advanced: [{ torch: !torch } as MediaTrackConstraintSet] }); if (session === sessionRef.current) { setTorch(!torch); publish(); } } catch { if (session === sessionRef.current) setError("Light control was rejected by this camera."); } }}>{torch ? "Light off" : "Light on"}</Button> : null}
+          {caps.focusMode?.some(mode => mode === "continuous" || mode === "single-shot") && phase === "active" ? <Button type="button" variant="outline" disabled={refocusing} onClick={() => void refocus()}>{refocusing ? "Refocusing…" : "Refocus"}</Button> : null}
+          {phase === "active" ? <Button type="button" variant="outline" onClick={() => scheduleRecovery("Manual decoder restart")}>Restart decoder</Button> : null}
+          {phase === "error" || phase === "paused" ? <Button type="button" onClick={() => { recoveries.current = []; void startCamera(selectedLens.current, true); }}>Retry camera</Button> : null}
+          {caps.zoom && caps.zoom.max > caps.zoom.min && phase === "active" ? <label className="w-full text-sm">Camera zoom (reported: {diagnostics?.camera.zoom ?? "unreported"})<input className="mt-2 w-full" type="range" aria-label="Camera zoom" min={caps.zoom.min} max={caps.zoom.max} step={caps.zoom.step || 0.1} defaultValue={diagnostics?.camera.zoom ?? caps.zoom.min} onPointerUp={event => { const track = streamRef.current?.getVideoTracks()[0]; if (track) void applyCameraConstraint(track, { advanced: [{ zoom: Number(event.currentTarget.value) } as MediaTrackConstraintSet] }).then(publish).catch(() => setError("Zoom control was rejected; camera remains available.")); }} onKeyUp={event => { const track = streamRef.current?.getVideoTracks()[0]; if (track) void applyCameraConstraint(track, { advanced: [{ zoom: Number(event.currentTarget.value) } as MediaTrackConstraintSet] }).then(publish).catch(() => setError("Zoom control was rejected.")); }} /></label> : null}
+        </div>
+        <ScannerDiagnosticPanel data={diagnostics} />
+      </DialogContent>
+    </Dialog>
+  </>;
 }
