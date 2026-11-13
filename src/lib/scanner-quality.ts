@@ -4,6 +4,7 @@ type CameraCapabilities = MediaTrackCapabilities & {
   exposureMode?: string[];
   focusDistance?: { min: number; max: number; step?: number };
   torch?: boolean;
+  zoom?: { min: number; max: number; step?: number };
 };
 type CameraSettings = MediaTrackSettings & {
   focusMode?: string;
@@ -11,6 +12,7 @@ type CameraSettings = MediaTrackSettings & {
   focusDistance?: number;
   exposureTime?: number;
   torch?: boolean;
+  zoom?: number;
 };
 
 export function cameraCapabilities(track: MediaStreamTrack): CameraCapabilities {
@@ -34,6 +36,9 @@ export function cameraSnapshot(track: MediaStreamTrack) {
     torch: settings.torch ?? null,
     focusModes: caps.focusMode?.join(", ") || "unreported",
     exposureModes: caps.exposureMode?.join(", ") || "unreported",
+    trackState: track.readyState ?? "unreported", muted: track.muted ?? false, enabled: track.enabled ?? true,
+    zoom: settings.zoom ?? null, zoomRange: caps.zoom ?? null,
+    torchSupported: Boolean(caps.torch),
   };
 }
 export type CameraSnapshot = ReturnType<typeof cameraSnapshot>;
@@ -76,11 +81,31 @@ export async function tuneCamera(track: MediaStreamTrack) {
   }
   const caps = cameraCapabilities(track);
   for (const [key, modes] of [["focusMode", caps.focusMode], ["exposureMode", caps.exposureMode]] as const) {
-    if (!modes?.includes("continuous")) continue;
+    const mode = modes?.includes("continuous") ? "continuous" : modes?.includes("single-shot") ? "single-shot" : null;
+    if (!mode) continue;
     try {
-      await applyCameraConstraint(track, { advanced: [{ [key]: "continuous" } as MediaTrackConstraintSet] });
-      notes.push(`${key}: continuous requested (see actual settings)`);
+      await applyCameraConstraint(track, { advanced: [{ [key]: mode } as MediaTrackConstraintSet] });
+      notes.push(`${key}: ${mode} requested (see actual settings)`);
     } catch (error) { notes.push(`${key}: not applied (${(error as Error).name})`); }
   }
   return notes;
+}
+
+export async function refocusCamera(track: MediaStreamTrack, signal: AbortSignal) {
+  const modes = cameraCapabilities(track).focusMode ?? [];
+  signal.throwIfAborted();
+  const mode = modes.includes("single-shot") ? "single-shot" : modes.includes("continuous") ? "continuous" : null;
+  if (!mode) throw new Error("Automatic focus control unavailable");
+  await applyCameraConstraint(track, { advanced: [{ focusMode: mode } as MediaTrackConstraintSet] });
+  if (mode === "single-shot" && modes.includes("continuous")) {
+    // Give the requested focus sweep time to run before restoring continuous AF.
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(new DOMException("Camera session closed", "AbortError")); };
+      const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 600);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    signal.throwIfAborted();
+    await applyCameraConstraint(track, { advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] });
+  }
 }

@@ -76,7 +76,7 @@ export async function acquireCamera(
           best?.deviceId &&
           current &&
           best.deviceId !== current &&
-          /back|rear|environment/i.test(best.label)
+          shouldPreferCamera(stream.getVideoTracks?.()[0]?.label ?? "", best.label)
         ) {
           stream.getTracks().forEach((track) => track.stop());
           return acquireCamera(media, signal, best.deviceId, timeoutMs);
@@ -103,6 +103,14 @@ export async function acquireCamera(
     }
   }
   throw lastError;
+}
+
+export function shouldPreferCamera(currentLabel: string, candidateLabel: string) {
+  // An opaque label is not evidence of a better lens. Do not hop between generic
+  // rear lenses just because enumeration order or a "wide" substring differs.
+  if (!/back|rear|environment/i.test(candidateLabel) || /ultra|macro|depth|tele/i.test(candidateLabel)) return false;
+  if (/front|selfie|ultra|macro|depth|tele/i.test(currentLabel)) return true;
+  return /main/i.test(candidateLabel) && !/main/i.test(currentLabel);
 }
 
 export function rankCameras(devices: MediaDeviceInfo[]) {
