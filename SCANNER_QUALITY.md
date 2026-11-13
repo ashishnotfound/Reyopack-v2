@@ -30,7 +30,13 @@ For the A55, record the browser/WebView version and photograph the diagnostics (
 
 ## Automated evidence and limits
 
-- The preceding baseline passed 49 unit and 34 desktop/mobile browser tests. Consecutive-v2 passes all 57 unit tests, 38 desktop/mobile Chromium browser tests, type checking, ESLint and the optimized production build.
+### Automatic exposed-camera fallback
+
+The scanner first allows a supported focus retry after eight seconds of misses. With **Try another camera automatically if AWB is not detected** enabled, fifteen seconds without a decoded barcode on an actively decoding camera permits another unvisited browser-exposed lens. Identifiable main/rear lenses rank first; known front, macro, ultrawide, depth and telephoto lenses are excluded. Opaque names such as Camera 0 do not identify physical optics; another opaque exposed camera may be tried without claiming it is rear-facing. Browsers exposing one logical camera cannot switch to hidden physical lenses.
+
+At most two alternatives are attempted per dialog opening, with a fresh fifteen-second window on each lens. No switching occurs during an in-flight lookup, stalled decoder or background pause. A visible message reports each attempt. Manual camera selection disables automatic switching until re-enabled; its chosen device remains selected across recovery. The checkbox can disable fallback entirely. Sustained misses do not prove optical blur, and an idle scanner with no label can also reach this timeout. Physical A55 validation remains pending.
+
+- The preceding baseline passed 49 unit and 34 desktop/mobile browser tests. Consecutive-v2 with bounded camera fallback passes all 59 unit tests, 40 desktop/mobile Chromium browser tests, type checking, ESLint and the optimized production build. Browser regressions verify automatic alternative selection after sustained misses, no cycling after alternatives are exhausted, and consecutive decoding afterward.
 - Unit regressions cover 1080p preference, 720p fallback, lens preservation, actual 640×480 grant repair, denied permission, late stream cleanup, optional-control failures/timeouts, and preserving resolution/focus while changing lighting.
 - Desktop Chromium and mobile Chromium emulation use real synthetic Code 128 video frames. They exercise 640×480 → 1920×1080 upgrade, refused upgrades with continued decoding, focus/torch constraint replacement, portrait frame changes to 1080×1920, full-size processing despite a small CSS preview, one lookup per scan, and deliberate repeated/automatic scans.
 - New browser regressions exercise actual ZXing decoding of ten different synthetic Code 128 AWBs on one camera acquisition, held duplicate suppression, failed lookup followed by success, decoder exceptions, a deliberately stalled decoder with advancing video, focus/zoom resolution retention, selected-lens retention and background/resume. Responses are stubbed; genuine order packing/shipment statuses are not changed.

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { isLikelyAwb, normalizeAwbLookup } from "@/lib/awb";
 import { playScanBeep, primeAudioFeedback } from "@/lib/audio-feedback";
 import { vibrateScanDetected } from "@/lib/native-feedback";
-import { acquireCamera, cameraErrorMessage, rankCameras } from "@/lib/scanner-camera";
+import { acquireCamera, cameraErrorMessage, fallbackCamera, rankCameras } from "@/lib/scanner-camera";
 import { applyCameraConstraint, cameraCapabilities, cameraSnapshot, refocusCamera, tuneCamera } from "@/lib/scanner-quality";
 import { playCameraPreview } from "@/lib/scanner-preview";
 import { ScanGate } from "@/lib/scanner-gate";
@@ -31,6 +31,9 @@ export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenReq
   const decoderEpoch = useRef(0);
   const acquisitionRef = useRef<AbortController | null>(null);
   const selectedLens = useRef("");
+  const triedLenses = useRef(new Set<string>());
+  const lensSwitches = useRef(0);
+  const lensStartedAt = useRef(0);
   const gateRef = useRef(new ScanGate());
   const singleFinished = useRef(false);
   const openRef = useRef(false);
@@ -52,6 +55,8 @@ export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenReq
   const [cameraId, setCameraId] = useState("");
   const [torch, setTorch] = useState(false);
   const [refocusing, setRefocusing] = useState(false);
+  const [autoCamera, setAutoCamera] = useState(true);
+  const [lensNotice, setLensNotice] = useState("");
   const [diagnostics, setDiagnostics] = useState<ScannerDiagnostics | null>(null);
 
   useEffect(() => { onAwbRef.current = onAwb; }, [onAwb]);
@@ -190,6 +195,7 @@ export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenReq
       streamRef.current = stream;
       const track = stream.getVideoTracks()[0];
       selectedLens.current = track.getSettings().deviceId ?? deviceId ?? "";
+      triedLenses.current.add(selectedLens.current);
       setCameraId(selectedLens.current);
       await playCameraPreview(video, stream, controller.signal);
       // Configure focus on a PLAYING camera, not before the sensor starts supplying frames.
@@ -207,6 +213,7 @@ export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenReq
         if (statsRef.current) statsRef.current.lenses = ranked.map((camera, index) => camera.label || `Camera ${index + 1} (lens identity unreported)`);
         publish();
       }).catch(() => undefined);
+      lensStartedAt.current = Date.now();
       startDecoder();
     } catch (caught) {
       if (session !== sessionRef.current) return;
@@ -250,16 +257,29 @@ export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenReq
           if (modes?.some(mode => mode === "single-shot" || mode === "continuous")) void refocus(true);
           else setError("Decoder is trying but no barcode is recognized. Improve light/distance or choose another available rear camera.");
         }
+        else if (!focusBusy.current) {
+          const next = fallbackCamera(cameras, triedLenses.current, {
+            enabled: autoCamera, busy: gateRef.current.busy, switches: lensSwitches.current,
+            decoderActive: stats.decoderRunning && !!stats.lastAttemptAt && now - stats.lastAttemptAt < 3000,
+            quietMs: now - Math.max(lensStartedAt.current, stats.lastDecodedAt ?? 0),
+          });
+          if (next) {
+            triedLenses.current.add(next.deviceId); lensSwitches.current++;
+            setLensNotice(`No recognition for 15 seconds. Trying ${next.label || "another browser camera"} (${lensSwitches.current}/2). Lens identity may be unreported.`);
+            if (statsRef.current) statsRef.current.recoveryReason = "Automatic camera fallback after sustained recognition misses";
+            void startRef.current(next.deviceId, true);
+          }
+        }
       }
       publish();
     }, 1000);
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", pause); };
-  }, [open, publish, refocus, scheduleRecovery, stopCamera, transition]);
+  }, [autoCamera, cameras, open, publish, refocus, scheduleRecovery, stopCamera, transition]);
 
   const changeOpen = useCallback((value: boolean) => {
     openRef.current = value;
     if (!value) stopCamera();
-    else { gateRef.current = new ScanGate(); singleFinished.current = false; recoveries.current = []; setNotice(""); }
+    else { gateRef.current = new ScanGate(); singleFinished.current = false; recoveries.current = []; triedLenses.current.clear(); lensSwitches.current = 0; setLensNotice(""); setNotice(""); }
     transition("idle"); setError(""); setOpen(value);
   }, [stopCamera, transition]);
   useEffect(() => {
@@ -283,10 +303,12 @@ export function MobileCameraScanner({ disabled, onAwb, soundEnabled, autoOpenReq
           {phase !== "active" ? <div className="absolute inset-0 grid place-items-center bg-black/65 p-6 text-center text-white"><div>{phase === "starting" ? <Loader2 className="mx-auto mb-3 animate-spin" /> : <CameraOff className="mx-auto mb-3" />}<p>{phase === "starting" ? "Starting camera…" : error || "Opening camera…"}</p></div></div> : null}
         </div>
         <p className="px-5 text-xs text-muted-foreground">Hold the full long barcode steady, about 15–30 cm away; move back if blurry. Resolution is not focus. Avoid glare; use Light on in dim rooms. Frames stay on this device.</p>
+        <label className="flex items-center gap-2 px-5 text-sm"><input type="checkbox" checked={autoCamera} onChange={event => setAutoCamera(event.target.checked)} />Try another camera automatically if AWB is not detected</label>
+        {lensNotice ? <p role="status" aria-label="Camera fallback result" className="px-5 text-sm">{lensNotice}</p> : null}
         {notice ? <div className="space-y-2 px-5" role="status" aria-label="Scan lookup result"><p className="text-sm font-semibold">{notice}</p><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={disabled} onClick={() => { gateRef.current.retry(); setNotice("Ready to retry this label"); publish(); }}>Retry this label</Button><Button type="button" onClick={() => changeOpen(false)}>View order / Pack</Button></div></div> : null}
         {error && phase === "active" ? <p role="alert" className="px-5 text-sm text-destructive">{error}</p> : null}
         <div className="flex flex-wrap gap-2 px-5">
-          {cameras.length > 1 ? <label className="text-sm">Camera<select aria-label="Camera lens" className="ml-2 max-w-56 rounded border bg-background p-2" value={cameraId} disabled={phase === "starting"} onChange={event => { selectedLens.current = event.target.value; void startCamera(event.target.value); }}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Camera ${index + 1}`}</option>)}</select></label> : null}
+          {cameras.length > 1 ? <label className="text-sm">Camera<select aria-label="Camera lens" className="ml-2 max-w-56 rounded border bg-background p-2" value={cameraId} disabled={phase === "starting"} onChange={event => { setAutoCamera(false); selectedLens.current = event.target.value; setLensNotice("Automatic switching paused after manual camera selection."); void startCamera(event.target.value); }}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Camera ${index + 1}`}</option>)}</select></label> : null}
           {caps.torch && phase === "active" ? <Button type="button" variant="outline" aria-pressed={torch} onClick={async () => { const track = streamRef.current?.getVideoTracks()[0], session = sessionRef.current; if (!track) return; try { await applyCameraConstraint(track, { advanced: [{ torch: !torch } as MediaTrackConstraintSet] }); if (session === sessionRef.current) { setTorch(!torch); publish(); } } catch { if (session === sessionRef.current) setError("Light control was rejected by this camera."); } }}>{torch ? "Light off" : "Light on"}</Button> : null}
           {caps.focusMode?.some(mode => mode === "continuous" || mode === "single-shot") && phase === "active" ? <Button type="button" variant="outline" disabled={refocusing} onClick={() => void refocus()}>{refocusing ? "Refocusing…" : "Refocus"}</Button> : null}
           {phase === "active" ? <Button type="button" variant="outline" onClick={() => scheduleRecovery("Manual decoder restart")}>Restart decoder</Button> : null}

@@ -119,6 +119,15 @@ export function rankCameras(devices: MediaDeviceInfo[]) {
     .sort((a, b) => score(b.label) - score(a.label));
 }
 
+/** Bounded experiments with browser-exposed lenses, not guesses about physical optics. */
+export function fallbackCamera(devices: MediaDeviceInfo[], tried: ReadonlySet<string>, state: {
+  enabled: boolean; busy: boolean; decoderActive: boolean; quietMs: number; switches: number;
+}) {
+  if (!state.enabled || state.busy || !state.decoderActive || state.quietMs < 15000 || state.switches >= 2) return;
+  return rankCameras(devices).find(device => device.deviceId && !tried.has(device.deviceId) &&
+    !/front|selfie|user|ultra|macro|depth|tele/i.test(device.label));
+}
+
 function score(label: string) {
   return (
     (/back|rear|environment/i.test(label) ? 10 : 0) +

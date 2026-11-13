@@ -76,6 +76,22 @@ async function attempts(page: Page) {
   return Number(text.match(/Attempts: (\d+)/)?.[1] ?? 0);
 }
 
+test("sustained misses automatically try one unvisited camera and do not cycle", async ({ page }) => {
+  test.setTimeout(60000);
+  let seen = 0;
+  await page.route("**/api/orders/scan-lookup", route => { seen++; return route.fulfill({ json: { order: DEMO_ORDER } }); });
+  await camera(page); await page.goto("/pack");
+  await page.getByLabel("Continuous label scanning", { exact: true }).check();
+  await page.getByRole("button", { name: "Scan AWB with camera" }).click();
+  await expect(page.getByLabel("Camera fallback result")).toContainText("Trying back alternate", { timeout: 22000 });
+  await expect(page.getByLabel("Camera lens")).toHaveValue("alternate");
+  // Exhausted browser-exposed alternatives must not cause repeated stream restarts.
+  await page.waitForTimeout(17000);
+  expect(await page.evaluate(() => (window as unknown as { cameraTest: CameraTest }).cameraTest.acquisitions)).toEqual(["main", "alternate"]);
+  await showLabel(page, 0); await expect.poll(() => seen).toBe(1);
+  await showLabel(page, 1); await expect.poll(() => seen).toBe(2);
+});
+
 test("ten distinct decoded labels, held duplicates and lookup failure keep one camera and a live decoder", async ({ page }) => {
   const seen: string[] = [], errors: string[] = []; let packingWrites = 0;
   page.on("pageerror", error => errors.push(error.message));
