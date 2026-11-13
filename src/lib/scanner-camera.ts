@@ -5,20 +5,16 @@ export async function acquireCamera(
   preferredDevice?: string,
   timeoutMs = 15000,
 ): Promise<MediaStream> {
+  const lens: MediaTrackConstraints = preferredDevice
+    ? { deviceId: { exact: preferredDevice } }
+    : { facingMode: { ideal: "environment" } };
+  // Ideals are preferences, not proof of the granted stream size. tuneCamera
+  // checks getSettings afterwards. Never silently drop an explicitly selected lens.
   const videoOptions: (MediaTrackConstraints | boolean)[] = [
-    preferredDevice
-      ? {
-          deviceId: { exact: preferredDevice },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        }
-      : {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-    { facingMode: { ideal: "environment" } },
-    true,
+    { ...lens, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+    { ...lens, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+    lens,
+    ...(preferredDevice ? [] : [true]),
   ];
   let lastError: unknown;
   for (const video of videoOptions) {

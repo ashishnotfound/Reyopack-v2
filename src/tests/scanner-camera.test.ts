@@ -4,6 +4,15 @@ import { acquireCamera, rankCameras } from "@/lib/scanner-camera";
 const stream = () =>
   ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream;
 describe("scanner camera ownership and fallback", () => {
+  it("prefers 1080p and preserves the selected lens at every resolution fallback", async () => {
+    const value = stream();
+    const getUserMedia = vi.fn()
+      .mockRejectedValueOnce(new DOMException("unsupported", "OverconstrainedError"))
+      .mockResolvedValue(value);
+    await acquireCamera({ getUserMedia, enumerateDevices: vi.fn() }, new AbortController().signal, "rear-main");
+    expect(getUserMedia.mock.calls[0][0].video).toMatchObject({ deviceId: { exact: "rear-main" }, width: { ideal: 1920 }, height: { ideal: 1080 } });
+    expect(getUserMedia.mock.calls[1][0].video).toMatchObject({ deviceId: { exact: "rear-main" }, width: { ideal: 1280 }, height: { ideal: 720 } });
+  });
   it("releases the camera even if lens enumeration stalls", async () => {
     vi.useFakeTimers();
     try {
@@ -33,6 +42,9 @@ describe("scanner camera ownership and fallback", () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(getUserMedia.mock.calls[1][0].video).toEqual({
       facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 },
     });
   });
   it("does not repeat denied permission requests", async () => {
